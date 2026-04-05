@@ -2201,3 +2201,134 @@ button.phase-bridge-carry-card {
     color: #e8c85c;
   }
 }
+
+/* ── Leaderboard table ── */
+
+.leaderboard-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.leaderboard-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border-tertiary);
+}
+
+.leaderboard-table td {
+  padding: 8px;
+  border-bottom: 0.5px solid var(--color-border-tertiary);
+}
+
+.leaderboard-row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.leaderboard-row:hover {
+  background: var(--color-background-secondary);
+}
+
+.leaderboard-row--expanded {
+  background: var(--color-background-secondary);
+}
+
+.leaderboard-rank {
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  width: 36px;
+}
+
+.leaderboard-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.leaderboard-detail-row td {
+  padding: 0 8px 10px;
+  border-bottom: 1px solid var(--color-border-tertiary);
+}
+
+.leaderboard-detail {
+  padding: 8px 0;
+}
+
+.leaderboard-detail-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.leaderboard-detail-stats {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.leaderboard-build-preview {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.leaderboard-load-btn {
+  margin-top: 10px;
+  padding: 6px 16px;
+  font-size: 12px;
+}
+
+/* ── Publish run card ── */
+
+.publish-run-card {
+  text-align: center;
+}
+
+.publish-run-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.publish-run-input {
+  padding: 8px 12px;
+  font-size: 14px;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--color-border-secondary);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  width: 180px;
+  max-width: 100%;
+}
+
+.publish-run-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.publish-run-success {
+  font-size: 13px;
+  color: #4caf50;
+  font-weight: 600;
+}
+
+.publish-run-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #e57373;
+}

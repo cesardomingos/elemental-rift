@@ -75,21 +75,22 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
             <h3>🎲 Seus dados (catalisadores)</h3>
             <ul className="modal-list">
               <li>
-                <strong>1ª opção (fixa)</strong>: enquanto seu melhor dado não for o de{' '}
-                {DICE_TYPES[DICE_TYPES.length - 1]} faces: <strong>evoluir faces</strong> (sobe um passo na
-                cadeia <code>{diceChain}</code> — cada número é quantas faces o 🎲 dado tem). Já no dado
-                máximo: <strong>+1 dado</strong> ao maior tipo.
+                <strong>1ª opção (fixa)</strong>: enquanto <strong>algum</strong> catalisador ainda não for o
+                dado de {DICE_TYPES[DICE_TYPES.length - 1]} faces, <strong>evoluir faces</strong> sobe{' '}
+                <strong>um passo na cadeia</strong> em <strong>cada dado</strong> que ainda puder (
+                <code>{diceChain}</code>). Quando <strong>todos</strong> já estiverem no topo da cadeia:{' '}
+                <strong>+1 cópia</strong> em <strong>cada</strong> catalisador (mais uma rolagem por dado por
+                rodada).
               </li>
               <li>
                 <strong>2ª e 3ª opções (sorteio ponderado)</strong>: tendem a privilegiar{' '}
                 <strong>novo 🎲 dado de 4 faces (1d4)</strong> e <strong>especiais</strong>;{' '}
-                <strong>+1 ao maior tipo</strong> é
-                mais raro para não dominar o fim de jogo. <strong>Sempre</strong> há pelo menos uma carta de
-                adicionar especial entre as duas aleatórias, desde a primeira câmara. Novos especiais
-                priorizam o dado com menos marcas; em empate, o catalisador mais à direita na lista (o mais
-                “principal”) recebe a marca. Você pode <strong>acumular quantas melhorias quiser</strong> no
-                mesmo dado ou em vários — inclusive <strong>repetir o mesmo efeito</strong>; nada é trocado ou
-                apagado ao escolher um novo especial.
+                <strong>+1 cópia em cada dado</strong> é mais raro para não dominar o fim de jogo.{' '}
+                <strong>Sempre</strong> há pelo menos uma carta de adicionar especial entre as duas
+                aleatórias, desde a primeira câmara. Cada especial escolhido grava a marca em{' '}
+                <strong>todos</strong> os catalisadores da mesa. Você pode{' '}
+                <strong>acumular quantas melhorias quiser</strong> — inclusive <strong>repetir o mesmo efeito</strong>;
+                nada é trocado ou apagado ao escolher um novo especial.
               </li>
             </ul>
           </section>
@@ -120,9 +121,11 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
             <ul className="modal-list">
               <li>
                 Ao <strong>vencer</strong> uma câmara e escolher o upgrade:{' '}
-                <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> e vida cheia. Se você{' '}
+                <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> e vida cheia. A cada{' '}
+                <strong>5 câmaras vencidas</strong> na campanha inteira (5.ª, 10.ª, 15.ª…) você recebe
+                automaticamente um <strong>1d4</strong> extra, antes de abrir o grimório. Se você{' '}
                 <strong>perder</strong> a câmara, ainda escolhe um upgrade, mas{' '}
-                <strong>não</strong> ganha esse bônus de PV e repete a mesma câmara.
+                <strong>não</strong> ganha esse bônus de PV nem o 1d4 de marco e repete a mesma câmara.
               </li>
               <li>
                 A trilha tem <strong>{CAMPAIGN_PHASE_COUNT} fases</strong> de{' '}

@@ -43,6 +43,25 @@ import {
   recordPlayerRollSession,
   recordUpgradeChosen,
 } from '../game/persistentStats'
+import type { BuildSnapshot } from '../game/runSubmission'
+
+const PLAYER_NAME_KEY = 'elemental-rift-player-name'
+
+function loadPlayerName(): string {
+  try {
+    return localStorage.getItem(PLAYER_NAME_KEY) || 'Alquimista'
+  } catch {
+    return 'Alquimista'
+  }
+}
+
+function savePlayerName(name: string) {
+  try {
+    localStorage.setItem(PLAYER_NAME_KEY, name)
+  } catch {
+    /* quota */
+  }
+}
 
 let battleAbortController: AbortController | null = null
 
@@ -97,20 +116,6 @@ function upgradesEquivalent(a: UpgradeOption, b: UpgradeOption): boolean {
   if (a.type !== b.type) return false
   if (a.type === 'add_special') return a.special === b.special
   return true
-}
-
-/**
- * Próximo add_special vai ao dado com menos marcas; em empate, ao mais à direita
- * (catalisador principal / último da coleção) para favorecer acúmulo desde o início.
- */
-function pickDieIndexForNewSpecial(col: DieInstance[]): number {
-  if (col.length === 0) return 0
-  let minLen = Infinity
-  for (const d of col) minLen = Math.min(minLen, d.special.length)
-  for (let i = col.length - 1; i >= 0; i--) {
-    if (col[i].special.length === minLen) return i
-  }
-  return col.length - 1
 }
 
 function pickEnemyDieIndexForSpecial(dice: DieInstance[]): number {
@@ -176,8 +181,8 @@ function buildWeightedRandomPool(fixed: UpgradeOption): WeightedUpgrade[] {
   const addCount: UpgradeOption = {
     type: 'add_count',
     icon: '➕',
-    label: 'Mais um dado (maior tipo)',
-    desc: '🎲 +1 cópia do seu maior dado: você rola mais uma vez e soma ao dano.',
+    label: 'Mais uma rolagem (cada dado)',
+    desc: '🎲 +1 cópia em cada catalisador da mesa: cada um rola mais uma vez por rodada.',
   }
 
   out.push({ opt: addDie, w: 2.4 })
@@ -235,24 +240,47 @@ function pickTwoWeightedUpgrades(fixed: UpgradeOption): UpgradeOption[] {
   return picked
 }
 
-function generateUpgrades(collection: DieInstance[]): UpgradeOption[] {
-  const d = collection[collection.length - 1]
-  const dIdx = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
+/** Câmaras vencidas na campanha inteira, 1-based (1..TOTAL_CAMPAIGN_CHAMBERS). */
+function globalChamberNumber(campaignPhase: number, battleIndexJustWon: number): number {
+  return campaignPhase * TOTAL_BATTLES + (battleIndexJustWon + 1)
+}
 
-  const fixed: UpgradeOption =
-    dIdx < DICE_TYPES.length - 1
-      ? {
-          type: 'upgrade_die',
-          icon: '🎲',
-          label: `Evoluir para dado de ${DICE_TYPES[dIdx + 1]} faces`,
-          desc: `🎲 Seu maior catalisador vira 1 dado de ${DICE_TYPES[dIdx + 1]} faces (1d${DICE_TYPES[dIdx + 1]}: resultados de 1 a ${DICE_TYPES[dIdx + 1]}).`,
-        }
-      : {
-          type: 'add_count',
-          icon: '➕',
-          label: 'Mais um dado',
-          desc: '🎲 +1 cópia do seu maior dado na coleção (mais uma rolagem por rodada).',
-        }
+/** +1 d4 automático a cada 5 câmaras vencidas (5.ª, 10.ª, …). */
+function maybeGrantMilestoneD4(
+  collection: DieInstance[],
+  won: boolean,
+  campaignPhase: number,
+  battleIndex: number,
+) {
+  if (!won) return
+  if (globalChamberNumber(campaignPhase, battleIndex) % 5 !== 0) return
+  collection.push({ sides: 4, count: 1, special: [] })
+}
+
+function collectionHasDieBelowMaxSides(collection: DieInstance[]): boolean {
+  for (const d of collection) {
+    const di = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
+    if (di >= 0 && di < DICE_TYPES.length - 1) return true
+  }
+  return false
+}
+
+function generateUpgrades(collection: DieInstance[]): UpgradeOption[] {
+  const anyBelowMax = collectionHasDieBelowMaxSides(collection)
+
+  const fixed: UpgradeOption = anyBelowMax
+    ? {
+        type: 'upgrade_die',
+        icon: '🎲',
+        label: 'Evoluir faces (todos os dados)',
+        desc: `🎲 Cada catalisador que ainda não for o dado de ${DICE_TYPES[DICE_TYPES.length - 1]} faces sobe um passo na cadeia (${DICE_TYPES.join(' → ')}).`,
+      }
+    : {
+        type: 'add_count',
+        icon: '➕',
+        label: 'Mais uma rolagem (todos)',
+        desc: '🎲 +1 cópia em cada catalisador na mesa (mais uma rolagem por dado por rodada).',
+      }
 
   const picked = pickTwoWeightedUpgrades(fixed)
   const hasSpecialCard = picked.some((u) => u.type === 'add_special')
@@ -381,7 +409,10 @@ interface GameState {
   sessionPlayerOneStreak: number
   sessionMaxRoundDamage: number
   sessionPoisonStacksGained: number
+  playerName: string
+  setPlayerName: (name: string) => void
   startCampaign: () => void
+  startCampaignFromBuild: (snapshot: BuildSnapshot) => void
   goToStart: () => void
   beginNextCampaignPhase: (carryDiceIndex: number) => void
   startBattle: () => void
@@ -434,6 +465,11 @@ export const useGameStore = create<GameState>((set, get) => ({
   sessionPlayerOneStreak: 0,
   sessionMaxRoundDamage: 0,
   sessionPoisonStacksGained: 0,
+  playerName: loadPlayerName(),
+  setPlayerName: (name) => {
+    savePlayerName(name)
+    set({ playerName: name })
+  },
   goToStart: () => {
     battleAbortController?.abort()
     battleAbortController = null
@@ -458,6 +494,25 @@ export const useGameStore = create<GameState>((set, get) => ({
       enemies: createRunEnemies(0),
       playerHpMax: PLAYER_BASE_HP,
       playerHp: PLAYER_BASE_HP,
+      lastBattleLog: [],
+      runStats: emptyRunStats(),
+      screen: 'battle',
+    })
+    get().startBattle()
+  },
+
+  startCampaignFromBuild: (snapshot: BuildSnapshot) => {
+    battleAbortController?.abort()
+    battleAbortController = null
+    const col = JSON.parse(JSON.stringify(snapshot.collection)) as DieInstance[]
+    set({
+      collection: col,
+      lives: 3,
+      battleIndex: 0,
+      campaignPhase: 0,
+      enemies: createRunEnemies(0),
+      playerHpMax: snapshot.playerHpMax,
+      playerHp: snapshot.playerHpMax,
       lastBattleLog: [],
       runStats: emptyRunStats(),
       screen: 'battle',
@@ -818,6 +873,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     const won = s.lastBattleWon
     const isLast = s.battleIndex === TOTAL_BATTLES - 1
     if (isLast && won) {
+      const col = JSON.parse(JSON.stringify(s.collection)) as DieInstance[]
+      maybeGrantMilestoneD4(col, true, s.campaignPhase, s.battleIndex)
+      set({ collection: col })
       if (s.campaignPhase < CAMPAIGN_PHASE_COUNT - 1) {
         get().showPhaseBridge()
       } else {
@@ -830,7 +888,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   showUpgradeAfterBattle: (won) => {
     const state = get()
-    const upgrades = generateUpgrades(state.collection)
+    const collection = JSON.parse(JSON.stringify(state.collection)) as DieInstance[]
+    maybeGrantMilestoneD4(collection, won, state.campaignPhase, state.battleIndex)
+    const upgrades = generateUpgrades(collection)
     const nextIdx = state.battleIndex + 1
     const enemies = JSON.parse(JSON.stringify(state.enemies)) as EnemyTemplate[]
 
@@ -851,6 +911,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({
       screen: 'upgrade',
       lastBattleWon: won,
+      collection,
       pendingUpgrades: upgrades,
       enemyUpgradePreview,
       enemies,
@@ -870,16 +931,18 @@ export const useGameStore = create<GameState>((set, get) => ({
       : state.battleIndex
 
     if (u.type === 'upgrade_die') {
-      const last = col[col.length - 1]
-      const dIdx = DICE_TYPES.indexOf(last.sides as (typeof DICE_TYPES)[number])
-      last.sides = DICE_TYPES[dIdx + 1]
+      for (const d of col) {
+        const dIdx = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
+        if (dIdx >= 0 && dIdx < DICE_TYPES.length - 1) d.sides = DICE_TYPES[dIdx + 1]!
+      }
     } else if (u.type === 'add_die') {
       col.push({ sides: 4, count: 1, special: [] })
     } else if (u.type === 'add_count') {
-      col[col.length - 1].count++
+      for (const d of col) d.count++
     } else if (u.type === 'add_special' && u.special) {
-      const i = pickDieIndexForNewSpecial(col)
-      col[i].special = [...col[i].special, u.special]
+      for (const d of col) {
+        d.special = [...d.special, u.special]
+      }
     }
 
     recordUpgradeChosen()

@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useGameStore } from './store/gameStore'
 import { useMenuMusic } from './hooks/useMenuMusic'
 import { AchievementsModal } from './components/AchievementsModal'
 import { EvolutionsGuideModal } from './components/EvolutionsGuideModal'
+import { LeaderboardModal } from './components/LeaderboardModal'
 import { PlayerAvatar } from './components/PlayerAvatar'
 import { EnemyAvatar } from './components/EnemyAvatar'
 import {
@@ -33,6 +34,8 @@ import type {
   RoundHealPopup,
   RunStats,
 } from './game/types'
+import { computeScore, GAME_VERSION, type BuildSnapshot } from './game/runSubmission'
+import { submitRun } from './lib/supabase'
 
 /** Posição pseudoaleatória estável por rodada/chave (evita “pilha” vertical). */
 function scatterOffset(seq: number, chipKey: string): { x: number; y: number } {
@@ -435,13 +438,25 @@ function DieFace({
 function StartScreen() {
   const collection = useGameStore((s) => s.collection)
   const startCampaign = useGameStore((s) => s.startCampaign)
+  const startCampaignFromBuild = useGameStore((s) => s.startCampaignFromBuild)
   const [guideOpen, setGuideOpen] = useState(false)
   const [achievementsOpen, setAchievementsOpen] = useState(false)
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false)
+
+  const handleLoadBuild = useCallback(
+    (snapshot: BuildSnapshot) => startCampaignFromBuild(snapshot),
+    [startCampaignFromBuild],
+  )
 
   return (
     <div className="app-screen active">
       <AchievementsModal open={achievementsOpen} onClose={() => setAchievementsOpen(false)} />
       <EvolutionsGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+      <LeaderboardModal
+        open={leaderboardOpen}
+        onClose={() => setLeaderboardOpen(false)}
+        onLoadBuild={handleLoadBuild}
+      />
       <div className="card" style={{ textAlign: 'center', padding: '2rem 1.5rem' }}>
         <h1 className="start-screen-logo-heading">
           <img
@@ -514,6 +529,13 @@ function StartScreen() {
           >
             🏆 Conquistas
           </button>
+          <button
+            type="button"
+            onClick={() => setLeaderboardOpen(true)}
+            style={{ padding: '10px 20px', fontSize: 14 }}
+          >
+            📊 Ranking
+          </button>
         </div>
       </div>
       <div className="card">
@@ -530,8 +552,11 @@ function StartScreen() {
           nos dados. Cada <strong>dado</strong> que aparece na tela (🎲) devolve 1 PV a quem o lançou (até o
           máximo). Ao{' '}
           <strong>vencer</strong> uma câmara e escolher upgrade, seu limite sobe{' '}
-          <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> (início: {PLAYER_BASE_HP}). Você tem 3
-          vidas para toda a campanha.
+          <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> (início: {PLAYER_BASE_HP}). A cada{' '}
+          <strong>5 câmaras vencidas</strong> na campanha (5.ª, 10.ª, 15.ª…) você ganha automaticamente um{' '}
+          <strong>1d4</strong> extra na mesa. As cartas do grimório aplicam o efeito a{' '}
+          <strong>todos os seus dados</strong> (evolução de faces, +1 rolagem por dado e marcas de especial).
+          Você tem 3 vidas para toda a campanha.
         </p>
       </div>
     </div>
@@ -998,16 +1023,102 @@ function PhaseBridgeScreen() {
   )
 }
 
+function PublishRunCard() {
+  const playerName = useGameStore((s) => s.playerName)
+  const setPlayerName = useGameStore((s) => s.setPlayerName)
+  const endVictory = useGameStore((s) => s.endVictory)
+  const runStats = useGameStore((s) => s.runStats)
+  const collection = useGameStore((s) => s.collection)
+  const campaignPhase = useGameStore((s) => s.campaignPhase)
+  const playerHpMax = useGameStore((s) => s.playerHpMax)
+
+  const [status, setStatus] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle')
+
+  const score = computeScore(runStats)
+
+  const handlePublish = async () => {
+    if (!playerName.trim()) return
+    setStatus('submitting')
+    const ok = await submitRun({
+      playerName: playerName.trim(),
+      gameVersion: GAME_VERSION,
+      score,
+      battlesWon: runStats.battlesWon,
+      deepestFloor: runStats.deepestFloor,
+      campaignCompleted: endVictory,
+      campaignPhase,
+      combatRounds: runStats.combatRounds,
+      damageDealt: runStats.damageDealt,
+      buildJson: { collection, playerHpMax, campaignPhase },
+      runStatsJson: runStats,
+    })
+    setStatus(ok ? 'done' : 'error')
+  }
+
+  return (
+    <div className="card publish-run-card">
+      <h3 style={{ marginBottom: 8 }}>📊 Publicar no ranking</h3>
+      <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
+        Score desta run: <strong>{score.toLocaleString()}</strong>
+      </p>
+      {status === 'done' ? (
+        <p className="publish-run-success">Run publicada com sucesso!</p>
+      ) : (
+        <>
+          <div className="publish-run-row">
+            <input
+              type="text"
+              className="publish-run-input"
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              placeholder="Seu nome"
+              maxLength={30}
+              disabled={status === 'submitting'}
+            />
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ padding: '8px 20px', fontSize: 13 }}
+              disabled={status === 'submitting' || !playerName.trim()}
+              onClick={handlePublish}
+            >
+              {status === 'submitting' ? 'Enviando…' : 'Publicar'}
+            </button>
+          </div>
+          {status === 'error' && (
+            <p className="publish-run-error">
+              Não foi possível publicar. Verifique as variáveis de ambiente do Supabase.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function EndScreen() {
   const endVictory = useGameStore((s) => s.endVictory)
   const collection = useGameStore((s) => s.collection)
   const goToStart = useGameStore((s) => s.goToStart)
   const startCampaign = useGameStore((s) => s.startCampaign)
+  const startCampaignFromBuild = useGameStore((s) => s.startCampaignFromBuild)
   const lastBattleLog = useGameStore((s) => s.lastBattleLog)
   const runStats = useGameStore((s) => s.runStats)
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false)
+
+  const handleLoadBuild = useCallback(
+    (snapshot: BuildSnapshot) => startCampaignFromBuild(snapshot),
+    [startCampaignFromBuild],
+  )
 
   return (
     <div className={`app-screen active end-screen ${endVictory ? 'end-screen--victory' : 'end-screen--defeat'}`}>
+      <LeaderboardModal
+        open={leaderboardOpen}
+        onClose={() => setLeaderboardOpen(false)}
+        onLoadBuild={handleLoadBuild}
+      />
+
       <div className="card end-screen-hero">
         {endVictory ? (
           <>
@@ -1050,6 +1161,8 @@ function EndScreen() {
 
       <RunStatsSummary stats={runStats} />
 
+      <PublishRunCard />
+
       <div className="card">
         <h3 style={{ marginBottom: 8 }}>🎲 Catalisadores ao fim da run</h3>
         <CollectionGrid dice={collection} />
@@ -1070,6 +1183,13 @@ function EndScreen() {
           style={{ padding: '10px 32px' }}
         >
           Nova trilha
+        </button>
+        <button
+          type="button"
+          onClick={() => setLeaderboardOpen(true)}
+          style={{ padding: '8px 24px' }}
+        >
+          📊 Ver ranking
         </button>
         <button type="button" onClick={goToStart} style={{ padding: '8px 24px' }}>
           Laboratório (menu)
