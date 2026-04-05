@@ -8,6 +8,8 @@ import {
   TOTAL_BATTLES,
   createRunEnemies,
   getSpecialById,
+  isEnemyEliteChamber,
+  mergePhaseStarterWithCarriedDie,
   startingCollectionForPhase,
 } from '../game/constants'
 import {
@@ -35,6 +37,12 @@ import {
   sfxPhaseWon,
   sfxPlayerDamaged,
 } from '../audio/feedbackSfx'
+import {
+  recordAfterBattle,
+  recordCampaignComplete,
+  recordPlayerRollSession,
+  recordUpgradeChosen,
+} from '../game/persistentStats'
 
 let battleAbortController: AbortController | null = null
 
@@ -87,13 +95,8 @@ async function delayBattle(
 
 function upgradesEquivalent(a: UpgradeOption, b: UpgradeOption): boolean {
   if (a.type !== b.type) return false
-  if (a.type === 'add_special' || a.type === 'replace_special')
-    return a.special === b.special
+  if (a.type === 'add_special') return a.special === b.special
   return true
-}
-
-function canApplyReplaceSpecial(collection: DieInstance[], specialId: string): boolean {
-  return collection.some((d) => d.special.some((s) => s !== specialId))
 }
 
 /**
@@ -110,29 +113,71 @@ function pickDieIndexForNewSpecial(col: DieInstance[]): number {
   return col.length - 1
 }
 
+function pickEnemyDieIndexForSpecial(dice: DieInstance[]): number {
+  if (dice.length === 0) return 0
+  let minLen = Infinity
+  for (const d of dice) minLen = Math.min(minLen, d.special.length)
+  for (let i = dice.length - 1; i >= 0; i--) {
+    if (dice[i].special.length === minLen) return i
+  }
+  return dice.length - 1
+}
+
+function enemyAnyDieCanUpgrade(enemy: EnemyTemplate): boolean {
+  return enemy.dice.some((d) => {
+    const di = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
+    return di >= 0 && di < DICE_TYPES.length - 1
+  })
+}
+
+function randomEnemySpecialUpgrade(): UpgradeOption {
+  const sp = SPECIALS[Math.floor(Math.random() * SPECIALS.length)]
+  return {
+    type: 'add_special',
+    icon: sp.icon,
+    label: sp.label,
+    desc: sp.desc,
+    special: sp.id,
+  }
+}
+
+function enemyUpgradeDieOption(enemy: EnemyTemplate, elite: boolean): UpgradeOption {
+  const d0 = enemy.dice.find((d) => {
+    const di = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
+    return di >= 0 && di < DICE_TYPES.length - 1
+  })
+  if (!d0) return randomEnemySpecialUpgrade()
+  const dIdx = DICE_TYPES.indexOf(d0.sides as (typeof DICE_TYPES)[number])
+  const nextS = DICE_TYPES[dIdx + 1]!
+  return {
+    type: 'upgrade_die',
+    icon: '🎲',
+    label: 'Dado maior',
+    desc: elite
+      ? `🎲 Próximo guardião: cada dado elegível sobe um tier de faces (ex.: até 1d${nextS} no dado principal).`
+      : `🎲 Próximo guardião: 1 dado de ${nextS} faces (1d${nextS}).`,
+  }
+}
+
 type WeightedUpgrade = { opt: UpgradeOption; w: number }
 
 /**
- * Candidatos aos slots 2 e 3 com pesos. Especiais podem acumular; add_special entra sempre.
- * replace_special aparece quando já existe marca para regravar.
+ * Candidatos aos slots 2 e 3 com pesos. Especiais só somam (add_special); sem regravar marcas antigas.
  */
-function buildWeightedRandomPool(
-  collection: DieInstance[],
-  fixed: UpgradeOption,
-): WeightedUpgrade[] {
+function buildWeightedRandomPool(fixed: UpgradeOption): WeightedUpgrade[] {
   const out: WeightedUpgrade[] = []
 
   const addDie: UpgradeOption = {
     type: 'add_die',
     icon: '🎲',
-    label: 'Novo dado d4',
-    desc: 'Adiciona 1d4 extra à coleção',
+    label: 'Novo dado de 4 faces',
+    desc: '🎲 +1 dado de 4 faces na mesa (notação 1d4: um dado, quatro faces, sorteia 1–4).',
   }
   const addCount: UpgradeOption = {
     type: 'add_count',
     icon: '➕',
     label: 'Mais um dado (maior tipo)',
-    desc: 'Adiciona +1 dado ao maior tipo',
+    desc: '🎲 +1 cópia do seu maior dado: você rola mais uma vez e soma ao dano.',
   }
 
   out.push({ opt: addDie, w: 2.4 })
@@ -151,31 +196,11 @@ function buildWeightedRandomPool(
     })
   }
 
-  const hasAnySpecial = collection.some((d) => d.special.length > 0)
-  if (hasAnySpecial) {
-    for (const sp of SPECIALS) {
-      if (!canApplyReplaceSpecial(collection, sp.id)) continue
-      out.push({
-        w: 1.05,
-        opt: {
-          type: 'replace_special',
-          icon: sp.icon,
-          label: `Regravar: ${sp.label}`,
-          desc: `Uma única marca já inscrita em algum catalisador passa a ser ${sp.label}; as outras marcas do mesmo dado permanecem.`,
-          special: sp.id,
-        },
-      })
-    }
-  }
-
   return out.filter((x) => !upgradesEquivalent(x.opt, fixed))
 }
 
-function pickTwoWeightedUpgrades(
-  collection: DieInstance[],
-  fixed: UpgradeOption,
-): UpgradeOption[] {
-  const working = [...buildWeightedRandomPool(collection, fixed)]
+function pickTwoWeightedUpgrades(fixed: UpgradeOption): UpgradeOption[] {
+  const working = [...buildWeightedRandomPool(fixed)]
   const picked: UpgradeOption[] = []
 
   for (let k = 0; k < 2 && working.length > 0; k++) {
@@ -201,8 +226,8 @@ function pickTwoWeightedUpgrades(
   const safeFallback: UpgradeOption = {
     type: 'add_die',
     icon: '🎲',
-    label: 'Novo dado d4',
-    desc: 'Adiciona 1d4 extra à coleção',
+    label: 'Novo dado de 4 faces',
+    desc: '🎲 +1 dado de 4 faces na mesa (notação 1d4).',
   }
   while (picked.length < 2) {
     picked.push({ ...safeFallback })
@@ -218,18 +243,18 @@ function generateUpgrades(collection: DieInstance[]): UpgradeOption[] {
     dIdx < DICE_TYPES.length - 1
       ? {
           type: 'upgrade_die',
-          icon: '⬆️',
-          label: `Evoluir para d${DICE_TYPES[dIdx + 1]}`,
-          desc: `Seu melhor dado vira 1d${DICE_TYPES[dIdx + 1]}`,
+          icon: '🎲',
+          label: `Evoluir para dado de ${DICE_TYPES[dIdx + 1]} faces`,
+          desc: `🎲 Seu maior catalisador vira 1 dado de ${DICE_TYPES[dIdx + 1]} faces (1d${DICE_TYPES[dIdx + 1]}: resultados de 1 a ${DICE_TYPES[dIdx + 1]}).`,
         }
       : {
           type: 'add_count',
           icon: '➕',
           label: 'Mais um dado',
-          desc: 'Adiciona +1 dado ao maior tipo',
+          desc: '🎲 +1 cópia do seu maior dado na coleção (mais uma rolagem por rodada).',
         }
 
-  const picked = pickTwoWeightedUpgrades(collection, fixed)
+  const picked = pickTwoWeightedUpgrades(fixed)
   const hasSpecialCard = picked.some((u) => u.type === 'add_special')
   if (!hasSpecialCard) {
     const sp = SPECIALS[Math.floor(Math.random() * SPECIALS.length)]
@@ -244,19 +269,35 @@ function generateUpgrades(collection: DieInstance[]): UpgradeOption[] {
   return [fixed, ...picked]
 }
 
-function generateEnemyUpgrade(enemy: EnemyTemplate): UpgradeOption {
-  const roll = Math.random()
-  if (roll < 0.4) {
-    const d = enemy.dice[0]
-    const dIdx = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
-    if (dIdx < DICE_TYPES.length - 1) {
-      return {
-        type: 'upgrade_die',
-        icon: '⬆️',
-        label: 'Dado maior',
-        desc: `Inimigo evolui para d${DICE_TYPES[dIdx + 1]}`,
-      }
+function generateEnemyUpgrade(enemy: EnemyTemplate, nextChamberIndex: number): UpgradeOption {
+  const elite = isEnemyEliteChamber(nextChamberIndex)
+
+  if (elite && enemy.dice.length < 3 && Math.random() < 0.27) {
+    return {
+      type: 'enemy_add_die',
+      icon: '🎲',
+      label: 'Mesa do guardião',
+      desc: '🎲 O próximo inimigo recebe +1 dado na mesa (eco profundo da Fenda).',
     }
+  }
+
+  const roll = Math.random()
+  if (elite) {
+    if (roll < 0.42) return randomEnemySpecialUpgrade()
+    if (roll < 0.7) {
+      if (enemyAnyDieCanUpgrade(enemy)) return enemyUpgradeDieOption(enemy, true)
+      return randomEnemySpecialUpgrade()
+    }
+    return {
+      type: 'add_hp',
+      icon: '❤️',
+      label: '+8 de vida',
+      desc: 'Próximo inimigo tem mais HP',
+    }
+  }
+
+  if (roll < 0.4 && enemyAnyDieCanUpgrade(enemy)) {
+    return enemyUpgradeDieOption(enemy, false)
   }
   if (roll < 0.7) {
     return {
@@ -266,14 +307,7 @@ function generateEnemyUpgrade(enemy: EnemyTemplate): UpgradeOption {
       desc: 'Próximo inimigo tem mais HP',
     }
   }
-  const sp = SPECIALS[Math.floor(Math.random() * SPECIALS.length)]
-  return {
-    type: 'add_special',
-    icon: sp.icon,
-    label: sp.label,
-    desc: sp.desc,
-    special: sp.id,
-  }
+  return randomEnemySpecialUpgrade()
 }
 
 function applyEnemyUpgradeToNext(
@@ -285,14 +319,22 @@ function applyEnemyUpgradeToNext(
   if (nextIdx >= enemies.length) return
   const next = enemies[nextIdx]
   if (u.type === 'upgrade_die') {
-    const d = next.dice[0]
-    const dIdx = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
-    if (dIdx < DICE_TYPES.length - 1) d.sides = DICE_TYPES[dIdx + 1]
+    for (const d of next.dice) {
+      const dIdx = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
+      if (dIdx >= 0 && dIdx < DICE_TYPES.length - 1) d.sides = DICE_TYPES[dIdx + 1]!
+    }
   } else if (u.type === 'add_hp') {
     next.hp += 8
   } else if (u.type === 'add_special' && u.special) {
-    const d0 = next.dice[0]
-    d0.special = [...d0.special, u.special]
+    const i = pickEnemyDieIndexForSpecial(next.dice)
+    const d = next.dice[i]
+    if (d) d.special = [...d.special, u.special]
+  } else if (u.type === 'enemy_add_die') {
+    const primary = next.dice[0]
+    if (!primary) return
+    const t = DICE_TYPES.indexOf(primary.sides as (typeof DICE_TYPES)[number])
+    const side = t > 0 ? DICE_TYPES[t - 1]! : primary.sides
+    next.dice.push({ sides: side, count: 1, special: [] })
   }
 }
 
@@ -333,9 +375,15 @@ interface GameState {
   endVictory: boolean
   lastBattleLog: LogEntry[]
   runStats: RunStats
+  /** Acumulados só desta batalha (conquistas / stats persistentes). */
+  sessionDamageToEnemy: number
+  sessionDamageToPlayer: number
+  sessionPlayerOneStreak: number
+  sessionMaxRoundDamage: number
+  sessionPoisonStacksGained: number
   startCampaign: () => void
   goToStart: () => void
-  beginNextCampaignPhase: () => void
+  beginNextCampaignPhase: (carryDiceIndex: number) => void
   startBattle: () => void
   toggleSpeed: () => void
   toggleBattlePause: () => void
@@ -343,6 +391,7 @@ interface GameState {
   runBattleAsync: (signal: AbortSignal) => Promise<void>
   processOneTurn: (signal: AbortSignal) => Promise<'continue' | 'end' | 'aborted'>
   endBattle: () => void
+  continueFromPostBattle: () => void
   showUpgradeAfterBattle: (won: boolean) => void
   showPhaseBridge: () => void
   showEndScreen: (victory: boolean) => void
@@ -380,6 +429,11 @@ export const useGameStore = create<GameState>((set, get) => ({
   endVictory: false,
   lastBattleLog: [],
   runStats: emptyRunStats(),
+  sessionDamageToEnemy: 0,
+  sessionDamageToPlayer: 0,
+  sessionPlayerOneStreak: 0,
+  sessionMaxRoundDamage: 0,
+  sessionPoisonStacksGained: 0,
   goToStart: () => {
     battleAbortController?.abort()
     battleAbortController = null
@@ -411,15 +465,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     get().startBattle()
   },
 
-  beginNextCampaignPhase: () => {
+  beginNextCampaignPhase: (carryDiceIndex: number) => {
     const s = get()
     if (s.campaignPhase >= CAMPAIGN_PHASE_COUNT - 1) return
     battleAbortController?.abort()
     battleAbortController = null
     const next = s.campaignPhase + 1
+    const idx = Number.isFinite(carryDiceIndex) ? Math.floor(carryDiceIndex) : 0
+    const collection = mergePhaseStarterWithCarriedDie(next, s.collection, idx)
     set({
       campaignPhase: next,
-      collection: startingCollectionForPhase(next),
+      collection,
       battleIndex: 0,
       enemies: createRunEnemies(next),
       screen: 'battle',
@@ -455,6 +511,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       playerDamagePopup: null,
       playerHealPopup: null,
       enemyHealPopup: null,
+      sessionDamageToEnemy: 0,
+      sessionDamageToPlayer: 0,
+      sessionPlayerOneStreak: 0,
+      sessionMaxRoundDamage: 0,
+      sessionPoisonStacksGained: 0,
     })
 
     void get().runBattleAsync(signal)
@@ -547,8 +608,23 @@ export const useGameStore = create<GameState>((set, get) => ({
     const poisonGainOnEnemy = poisonStacksGainedFromRolls(pRolls)
     const poisonGainOnPlayer = poisonStacksGainedFromRolls(eRolls)
 
-    const { base: dmgBaseToEnemy, bonus: dmgBonusToEnemy } = splitDamageFromRolls(pRolls)
-    const { base: dmgBaseFromEnemy, bonus: dmgBonusFromEnemy } = splitDamageFromRolls(eRolls)
+    const rollMeta = recordPlayerRollSession(
+      pRolls.map((r) => ({ val: r.val, sides: r.sides })),
+      cur.sessionPlayerOneStreak,
+    )
+    const roundDmgToEnemy = pTotal + poisonTickToEnemy
+    const roundDmgToPlayer = eTotal + poisonTickToPlayer
+
+    const {
+      base: dmgBaseToEnemy,
+      bonusCrit: dmgCritToEnemy,
+      bonusSpecial: dmgSpecToEnemy,
+    } = splitDamageFromRolls(pRolls)
+    const {
+      base: dmgBaseFromEnemy,
+      bonusCrit: dmgCritFromEnemy,
+      bonusSpecial: dmgSpecFromEnemy,
+    } = splitDamageFromRolls(eRolls)
     const popupSeq = cur.battleSessionId * 100000 + nextRound * 10
     const playerHealTotal = rollHealP + plHealSpec
     const enemyHealTotal = rollHealE + enHealSpec
@@ -570,13 +646,19 @@ export const useGameStore = create<GameState>((set, get) => ({
       isRolling: false,
       playerHp,
       enemyHp,
+      sessionPlayerOneStreak: rollMeta.nextStreak,
+      sessionDamageToEnemy: s.sessionDamageToEnemy + roundDmgToEnemy,
+      sessionDamageToPlayer: s.sessionDamageToPlayer + roundDmgToPlayer,
+      sessionMaxRoundDamage: Math.max(s.sessionMaxRoundDamage, roundDmgToEnemy),
+      sessionPoisonStacksGained: s.sessionPoisonStacksGained + poisonGainOnEnemy,
       enemyPoisonStacks: s.enemyPoisonStacks + poisonGainOnEnemy,
       playerPoisonStacks: s.playerPoisonStacks + poisonGainOnPlayer,
       enemyDamagePopup:
         pTotal > 0 || poisonTickToEnemy > 0
           ? {
               base: dmgBaseToEnemy,
-              bonus: dmgBonusToEnemy,
+              bonusCrit: dmgCritToEnemy,
+              bonusSpecial: dmgSpecToEnemy,
               ...(poisonTickToEnemy > 0 ? { poison: poisonTickToEnemy } : {}),
               seq: popupSeq + 1,
             }
@@ -585,7 +667,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         eTotal > 0 || poisonTickToPlayer > 0
           ? {
               base: dmgBaseFromEnemy,
-              bonus: dmgBonusFromEnemy,
+              bonusCrit: dmgCritFromEnemy,
+              bonusSpecial: dmgSpecFromEnemy,
               ...(poisonTickToPlayer > 0 ? { poison: poisonTickToPlayer } : {}),
               seq: popupSeq + 2,
             }
@@ -674,6 +757,16 @@ export const useGameStore = create<GameState>((set, get) => ({
   endBattle: () => {
     const state = get()
     const won = state.enemyHp <= 0
+    const playerHpEnd = state.playerHp
+    recordAfterBattle({
+      won,
+      sessionDamageToEnemy: state.sessionDamageToEnemy,
+      sessionDamageToPlayer: state.sessionDamageToPlayer,
+      playerHpEnd,
+      chamberNumber: state.battleIndex + 1,
+      sessionMaxRoundDamage: state.sessionMaxRoundDamage,
+      sessionPoisonStacksGained: state.sessionPoisonStacksGained,
+    })
     let lives = state.lives
     let playerHp = state.playerHp
     const lastBattleLog = state.battleLog.map((e) => ({ ...e }))
@@ -705,25 +798,6 @@ export const useGameStore = create<GameState>((set, get) => ({
       return
     }
 
-    const isLast = state.battleIndex === TOTAL_BATTLES - 1
-    if (isLast && won) {
-      sfxPhaseWon()
-      set((s) => ({
-        lives,
-        playerHp,
-        battleRunning: false,
-        battlePaused: false,
-        lastBattleLog,
-        runStats: mergeEndStats(s.runStats),
-      }))
-      if (state.campaignPhase < CAMPAIGN_PHASE_COUNT - 1) {
-        get().showPhaseBridge()
-      } else {
-        get().showEndScreen(true)
-      }
-      return
-    }
-
     if (won) sfxPhaseWon()
     else sfxPhaseLost()
 
@@ -734,22 +808,51 @@ export const useGameStore = create<GameState>((set, get) => ({
       battlePaused: false,
       lastBattleLog,
       runStats: mergeEndStats(s.runStats),
+      lastBattleWon: won,
+      screen: 'post_battle',
     }))
+  },
+
+  continueFromPostBattle: () => {
+    const s = get()
+    const won = s.lastBattleWon
+    const isLast = s.battleIndex === TOTAL_BATTLES - 1
+    if (isLast && won) {
+      if (s.campaignPhase < CAMPAIGN_PHASE_COUNT - 1) {
+        get().showPhaseBridge()
+      } else {
+        get().showEndScreen(true)
+      }
+      return
+    }
     get().showUpgradeAfterBattle(won)
   },
 
   showUpgradeAfterBattle: (won) => {
     const state = get()
     const upgrades = generateUpgrades(state.collection)
-    const enemyUp = generateEnemyUpgrade(state.enemies[state.battleIndex])
+    const nextIdx = state.battleIndex + 1
     const enemies = JSON.parse(JSON.stringify(state.enemies)) as EnemyTemplate[]
-    applyEnemyUpgradeToNext(enemies, state.battleIndex, enemyUp)
+
+    let enemyUpgradePreview: string
+    if (nextIdx < enemies.length) {
+      let u = generateEnemyUpgrade(enemies[nextIdx]!, nextIdx)
+      applyEnemyUpgradeToNext(enemies, state.battleIndex, u)
+      enemyUpgradePreview = `${u.icon} ${u.label}: ${u.desc}`
+      if (isEnemyEliteChamber(nextIdx)) {
+        u = generateEnemyUpgrade(enemies[nextIdx]!, nextIdx)
+        applyEnemyUpgradeToNext(enemies, state.battleIndex, u)
+        enemyUpgradePreview += ` · ${u.icon} ${u.label}: ${u.desc}`
+      }
+    } else {
+      enemyUpgradePreview = 'Fim deste trecho: não há próximo guardião.'
+    }
 
     set({
       screen: 'upgrade',
       lastBattleWon: won,
       pendingUpgrades: upgrades,
-      enemyUpgradePreview: `${enemyUp.icon} ${enemyUp.label}: ${enemyUp.desc}`,
+      enemyUpgradePreview,
       enemies,
     })
   },
@@ -777,19 +880,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     } else if (u.type === 'add_special' && u.special) {
       const i = pickDieIndexForNewSpecial(col)
       col[i].special = [...col[i].special, u.special]
-    } else if (u.type === 'replace_special' && u.special) {
-      const target = col.find((d) => d.special.some((s) => s !== u.special))
-      if (target) {
-        const j = target.special.findIndex((s) => s !== u.special)
-        if (j >= 0) {
-          target.special = [
-            ...target.special.slice(0, j),
-            u.special,
-            ...target.special.slice(j + 1),
-          ]
-        }
-      }
     }
+
+    recordUpgradeChosen()
 
     set({
       collection: col,
@@ -811,6 +904,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   showEndScreen: (victory) => {
+    if (victory) recordCampaignComplete()
     set({
       screen: 'end',
       endVictory: victory,

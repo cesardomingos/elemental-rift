@@ -28,6 +28,10 @@ export interface DieInstance {
 export interface RollResult {
   val: number
   bonus: number
+  /** Dano extra de efeitos que exigem face máxima (dobro, explosão, vidro). */
+  bonusCrit: number
+  /** Dano extra dos demais catalisadores na rolagem. */
+  bonusSpecial: number
   total: number
   isCrit: boolean
   isHeal: boolean
@@ -48,7 +52,8 @@ export interface EnemyTemplate {
 /** Feedback visual de dano numa rodada (faces vs bônus de efeitos vs veneno). */
 export type RoundDamagePopup = {
   base: number
-  bonus: number
+  bonusCrit: number
+  bonusSpecial: number
   /** Dano de veneno aplicado no início desta rodada (1 por acúmulo). */
   poison?: number
   seq: number
@@ -61,7 +66,13 @@ export type RoundHealPopup = {
   seq: number
 }
 
-export type Screen = 'start' | 'battle' | 'upgrade' | 'phase_bridge' | 'end'
+export type Screen =
+  | 'start'
+  | 'battle'
+  | 'post_battle'
+  | 'upgrade'
+  | 'phase_bridge'
+  | 'end'
 
 export interface SpecialDef {
   id: SpecialId
@@ -75,8 +86,9 @@ export type UpgradeOptionType =
   | 'add_die'
   | 'add_count'
   | 'add_special'
-  | 'replace_special'
   | 'add_hp'
+  /** Só no eco da masmorra: +1 dado ao próximo guardião. */
+  | 'enemy_add_die'
 
 export interface UpgradeOption {
   type: UpgradeOptionType

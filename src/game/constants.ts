@@ -1,4 +1,4 @@
-import type { DieInstance, EnemyTemplate, SpecialDef } from './types'
+import type { DieInstance, EnemyTemplate, SpecialDef, SpecialId } from './types'
 
 export const DICE_TYPES = [4, 6, 8, 10, 12, 20] as const
 
@@ -41,6 +41,53 @@ export function getCampaignPhaseTheme(phaseIndex: number) {
 /** Total de câmaras para vencer a campanha (todas as fases). */
 export const TOTAL_CAMPAIGN_CHAMBERS = TOTAL_BATTLES * CAMPAIGN_PHASE_COUNT
 
+/** Primeira câmara elite (7ª luta, índice 0-based = 6): mais dados, especiais e eco reforçado. */
+export const ENEMY_ELITE_CHAMBER_INDEX = 6
+
+/** A partir da 9ª luta (índice 8), guardiões nascem com 3 dados. */
+export const ENEMY_ELITE_THREE_DICE_INDEX = 8
+
+const ENEMY_ELITE_SPECIAL_POOL: readonly SpecialId[] = [
+  'steady',
+  'double_max',
+  'explode',
+  'pulse',
+  'high_half',
+  'even_strike',
+  'odd_strike',
+  'poison',
+  'tempest',
+  'brink',
+  'heal',
+  'reroll',
+  'desperate',
+  'glass',
+  'twinned_max',
+  'fonte_vital',
+  'wound_salve',
+  'opening_crit',
+]
+
+function pickDistinctSpecials(seed: number, count: number): SpecialId[] {
+  const pool = ENEMY_ELITE_SPECIAL_POOL
+  const out: SpecialId[] = []
+  let salt = 0
+  while (out.length < count && salt < 120) {
+    const s = pool[(seed + salt) % pool.length]!
+    salt++
+    if (!out.includes(s)) out.push(s)
+  }
+  while (out.length < count) {
+    out.push(pool[out.length % pool.length]!)
+  }
+  return out
+}
+
+/** Próximo guardião (índice da câmara) é elite: 7ª luta em diante, ainda dentro da fase. */
+export function isEnemyEliteChamber(chamberIndex: number): boolean {
+  return chamberIndex >= ENEMY_ELITE_CHAMBER_INDEX && chamberIndex < TOTAL_BATTLES
+}
+
 /** Vida inicial do alquimista e quanto o limite sobe após cada batalha (estudo no abismo). */
 export const PLAYER_BASE_HP = 20
 export const PLAYER_HP_GROWTH_PER_BATTLE = 3
@@ -73,20 +120,93 @@ export function startingCollectionForPhase(phaseIndex: number): DieInstance[] {
   return [{ sides: DICE_TYPES[idx], count: 1, special: [] }]
 }
 
+function cloneDieInstance(d: DieInstance): DieInstance {
+  return {
+    sides: d.sides,
+    count: d.count,
+    special: [...d.special],
+  }
+}
+
+/**
+ * Dado inicial da nova fase + uma cópia de um catalisador escolhido ao cruzar a fronteira.
+ */
+export function mergePhaseStarterWithCarriedDie(
+  phaseIndex: number,
+  previousCollection: DieInstance[],
+  carryDiceIndex: number,
+): DieInstance[] {
+  const base = startingCollectionForPhase(phaseIndex).map(cloneDieInstance)
+  if (previousCollection.length === 0) return base
+  const i = Math.max(
+    0,
+    Math.min(Math.floor(carryDiceIndex), previousCollection.length - 1),
+  )
+  return [...base, cloneDieInstance(previousCollection[i]!)]
+}
+
+/** Sugestão inicial: dado com mais marcas / maior tier (jogador pode trocar na fronteira). */
+export function defaultPhaseCarryDiceIndex(collection: DieInstance[]): number {
+  if (collection.length <= 1) return 0
+  let best = 0
+  let bestScore = -1
+  for (let i = 0; i < collection.length; i++) {
+    const d = collection[i]!
+    const tier = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
+    const score = d.special.length * 100 + Math.max(0, tier) * 8 + d.count * 3
+    if (score > bestScore) {
+      bestScore = score
+      best = i
+    }
+  }
+  return best
+}
+
 /**
  * Fila de inimigos da fase. Fases posteriores: mais PV e dados em patamares mais altos.
  */
+function buildEnemyDiceForChamber(
+  phase: number,
+  chamberIndex: number,
+  tierIdx: number,
+  sides: number,
+): DieInstance[] {
+  if (chamberIndex < ENEMY_ELITE_CHAMBER_INDEX) {
+    return [{ sides, count: 1, special: [] }]
+  }
+
+  const seedBase = phase * 37 + chamberIndex * 19
+  const mainSpecials = pickDistinctSpecials(seedBase, 2)
+  const main: DieInstance = { sides, count: 1, special: mainSpecials }
+
+  const secTier = Math.max(0, tierIdx - 1)
+  const secSides = DICE_TYPES[secTier]!
+
+  if (chamberIndex < ENEMY_ELITE_THREE_DICE_INDEX) {
+    const secSpec = pickDistinctSpecials(seedBase + 61, 1)
+    return [main, { sides: secSides, count: 1, special: secSpec }]
+  }
+
+  const thirdTier = Math.max(0, tierIdx - 2)
+  const thirdSides = DICE_TYPES[thirdTier]!
+  return [
+    main,
+    { sides: secSides, count: 1, special: pickDistinctSpecials(seedBase + 61, 1) },
+    { sides: thirdSides, count: 1, special: pickDistinctSpecials(seedBase + 83, 1) },
+  ]
+}
+
 export function createRunEnemies(phaseIndex = 0): EnemyTemplate[] {
   const p = Math.max(0, phaseIndex)
   const hpMult = 1 + p * 0.24
   const diceOffset = p
   return DUNGEON_ENEMIES.map((row, i) => {
     const tierIdx = Math.min(i + diceOffset, DICE_TYPES.length - 1)
-    const sides = DICE_TYPES[tierIdx]
+    const sides = DICE_TYPES[tierIdx]!
     return {
       name: row.name,
       hp: Math.max(1, Math.round(row.hp * hpMult)),
-      dice: [{ sides, count: 1, special: [] }],
+      dice: buildEnemyDiceForChamber(p, i, tierIdx, sides),
     }
   })
 }

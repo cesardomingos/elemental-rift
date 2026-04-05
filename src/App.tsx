@@ -1,8 +1,10 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useGameStore } from './store/gameStore'
 import { useMenuMusic } from './hooks/useMenuMusic'
+import { AchievementsModal } from './components/AchievementsModal'
 import { EvolutionsGuideModal } from './components/EvolutionsGuideModal'
 import { PlayerAvatar } from './components/PlayerAvatar'
+import { EnemyAvatar } from './components/EnemyAvatar'
 import {
   CAMPAIGN_PHASES,
   CAMPAIGN_PHASE_COUNT,
@@ -13,8 +15,17 @@ import {
   TOTAL_CAMPAIGN_CHAMBERS,
   getCampaignPhaseTheme,
   getSpecialById,
+  defaultPhaseCarryDiceIndex,
 } from './game/constants'
 import { totalRoll } from './game/dice'
+import {
+  diceFriendlyPrimary,
+  diceNotation,
+  diceNotationExplainer,
+  diceFriendlyOneDieOf,
+  diceNotationOne,
+  dicePhaseStartLine,
+} from './game/diceLabels'
 import type {
   DieInstance,
   LogEntry,
@@ -71,7 +82,10 @@ function CollectionGrid({ dice }: { dice: DieInstance[] }) {
             key={`${d.sides}-${d.count}-${i}`}
             className={`collection-die${hasSp ? ' has-special' : ''}`}
           >
-            {d.count}d{d.sides}
+            <div className="collection-die-primary">{diceFriendlyPrimary(d)}</div>
+            <div className="collection-die-notation" aria-hidden>
+              {diceNotation(d)} · de 1 a {d.sides}
+            </div>
             {hasSp ? (
               <>
                 <br />
@@ -107,32 +121,37 @@ function DiceTags({
   return (
     <div className="dice-tags">
       {dice.map((d, i) => (
-        <span key={i} className="dice-tag">
-          {d.count}d{d.sides}
-          {d.special.map((id, si) => {
-            const sp = getSpecialById(id)
-            if (!sp) return null
-            if (specialTooltips) {
+        <span key={i} className="dice-tag" title={diceNotationExplainer(d)}>
+          <span className="dice-tag__text">
+            <span className="dice-tag__main">{diceFriendlyPrimary(d)}</span>
+            <span className="dice-tag__abbr" aria-hidden>
+              {diceNotation(d)}
+            </span>
+          </span>
+          <span className="dice-tag__icons">
+            {d.special.map((id, si) => {
+              const sp = getSpecialById(id)
+              if (!sp) return null
+              if (specialTooltips) {
+                return (
+                  <span
+                    key={`${i}-${si}-${id}`}
+                    className="battle-special-tip"
+                    tabIndex={0}
+                    data-tip={sp.desc}
+                    aria-label={`${sp.label}: ${sp.desc}`}
+                  >
+                    {sp.icon}
+                  </span>
+                )
+              }
               return (
-                <span
-                  key={`${i}-${si}-${id}`}
-                  className="battle-special-tip"
-                  tabIndex={0}
-                  data-tip={sp.desc}
-                  aria-label={`${sp.label}: ${sp.desc}`}
-                >
-                  {' '}
+                <span key={`${i}-${si}-${id}`} className="dice-tag__icon-plain">
                   {sp.icon}
                 </span>
               )
-            }
-            return (
-              <span key={`${i}-${si}-${id}`}>
-                {' '}
-                {sp.icon}
-              </span>
-            )
-          })}
+            })}
+          </span>
         </span>
       ))}
     </div>
@@ -149,13 +168,16 @@ function RoundDamagePopups({
 }) {
   if (!popup) return null
   const showBase = popup.base > 0
-  const showBonus = popup.bonus > 0
+  const showCrit = popup.bonusCrit > 0
+  const showSpecial = popup.bonusSpecial > 0
   const showPoison = (popup.poison ?? 0) > 0
-  if (!showBase && !showBonus && !showPoison) return null
+  if (!showBase && !showCrit && !showSpecial && !showPoison) return null
   const baseCls =
     variant === 'dealt' ? 'damage-popup--base' : 'damage-popup--base-taken'
-  const bonusCls =
+  const critCls =
     variant === 'dealt' ? 'damage-popup--bonus' : 'damage-popup--bonus-taken'
+  const specialCls =
+    variant === 'dealt' ? 'damage-popup--special' : 'damage-popup--special-taken'
   let delayIdx = 0
   const nextDelay = () => ({ animationDelay: `${(delayIdx++ * 0.07).toFixed(2)}s` })
   return (
@@ -167,32 +189,44 @@ function RoundDamagePopups({
             style={nextDelay()}
             title={
               variant === 'dealt'
-                ? 'Dano direto das faces que saíram na mesa, antes de catalisadores e veneno'
-                : 'Dano bruto das faces do inimigo, antes dos reforços elementais'
+                ? 'Dano das faces sorteadas nos dados (ataque básico da rolagem)'
+                : 'Dano das faces dos dados do inimigo'
             }
           >
-            <span className="damage-popup-kind">
-              {variant === 'dealt' ? 'Impacto bruto' : 'Golpes crus'}
-            </span>
+            <span className="damage-popup-kind">Dano</span>
             <span className="damage-popup-num">−{popup.base}</span>
           </span>
         </ScatteredPopupAnchor>
       ) : null}
-      {showBonus ? (
-        <ScatteredPopupAnchor seq={popup.seq} chipKey={`dmg-bonus-${variant}`}>
+      {showCrit ? (
+        <ScatteredPopupAnchor seq={popup.seq} chipKey={`dmg-crit-${variant}`}>
           <span
-            className={`damage-popup ${bonusCls} hp-popup-chip-motion`}
+            className={`damage-popup ${critCls} hp-popup-chip-motion`}
             style={nextDelay()}
             title={
               variant === 'dealt'
-                ? 'Dano extra vindo dos seus efeitos especiais nesta rolagem'
-                : 'Dano extra dos efeitos especiais do inimigo nesta rolagem'
+                ? 'Dano extra de catalisadores que disparam na face máxima do dado'
+                : 'Dano extra do inimigo ao tirar a face máxima'
             }
           >
-            <span className="damage-popup-kind">
-              {variant === 'dealt' ? 'Catalisadores' : 'Pressão elemental'}
-            </span>
-            <span className="damage-popup-num">−{popup.bonus}</span>
+            <span className="damage-popup-kind">Crítico</span>
+            <span className="damage-popup-num">−{popup.bonusCrit}</span>
+          </span>
+        </ScatteredPopupAnchor>
+      ) : null}
+      {showSpecial ? (
+        <ScatteredPopupAnchor seq={popup.seq} chipKey={`dmg-special-${variant}`}>
+          <span
+            className={`damage-popup ${specialCls} hp-popup-chip-motion`}
+            style={nextDelay()}
+            title={
+              variant === 'dealt'
+                ? 'Dano extra de outros catalisadores nesta rolagem'
+                : 'Dano extra de outros efeitos do inimigo nesta rolagem'
+            }
+          >
+            <span className="damage-popup-kind">Especial</span>
+            <span className="damage-popup-num">−{popup.bonusSpecial}</span>
           </span>
         </ScatteredPopupAnchor>
       ) : null}
@@ -203,11 +237,11 @@ function RoundDamagePopups({
             style={nextDelay()}
             title={
               variant === 'dealt'
-                ? 'Dano do veneno da fenda no inimigo (1 PV por acúmulo, no começo da rodada)'
-                : 'Dano do veneno da fenda em você (1 PV por acúmulo, no começo da rodada)'
+                ? 'Dano do veneno no inimigo (1 PV por acúmulo, no começo da rodada)'
+                : 'Dano do veneno em você (1 PV por acúmulo, no começo da rodada)'
             }
           >
-            <span className="damage-popup-kind">Névoa tóxica</span>
+            <span className="damage-popup-kind">Veneno</span>
             <span className="damage-popup-num">−{popup.poison}</span>
           </span>
         </ScatteredPopupAnchor>
@@ -229,12 +263,12 @@ function RoundHealPopups({
   if (!showDice && !showSpec) return null
   const diceTitle =
     who === 'player'
-      ? 'Vitalidade que volta ao rolar cada dado seu (1 PV por dado nesta rodada)'
-      : 'Vitalidade que o inimigo recupera por dado rolado (1 PV por dado)'
+      ? 'Cura ao rolar cada um dos seus dados (1 PV por dado nesta rodada)'
+      : 'Cura do inimigo ao rolar cada dado (1 PV por dado)'
   const specTitle =
     who === 'player'
-      ? 'Cura vinda dos seus efeitos especiais nesta mesma rolagem'
-      : 'Cura vinda dos efeitos especiais do inimigo nesta rolagem'
+      ? 'Cura dos seus catalisadores nesta rolagem'
+      : 'Cura dos catalisadores do inimigo nesta rolagem'
   let delayIdx = 0
   const nextDelay = () => ({ animationDelay: `${(delayIdx++ * 0.07).toFixed(2)}s` })
   return (
@@ -246,7 +280,7 @@ function RoundHealPopups({
             style={nextDelay()}
             title={diceTitle}
           >
-            <span className="damage-popup-kind">Fluxo dos dados</span>
+            <span className="damage-popup-kind">Cura</span>
             <span className="damage-popup-num">+{popup.fromDice}</span>
           </span>
         </ScatteredPopupAnchor>
@@ -258,7 +292,7 @@ function RoundHealPopups({
             style={nextDelay()}
             title={specTitle}
           >
-            <span className="damage-popup-kind">Essência restaurada</span>
+            <span className="damage-popup-kind">Cura</span>
             <span className="damage-popup-num">+{popup.fromSpecials}</span>
           </span>
         </ScatteredPopupAnchor>
@@ -267,10 +301,18 @@ function RoundHealPopups({
   )
 }
 
-function BattleLogHistory({ entries, title }: { entries: LogEntry[]; title: string }) {
+function BattleLogHistory({
+  entries,
+  title,
+  className,
+}: {
+  entries: LogEntry[]
+  title: string
+  className?: string
+}) {
   if (entries.length === 0) return null
   return (
-    <div className="card">
+    <div className={['card', className].filter(Boolean).join(' ')}>
       <h3 style={{ marginBottom: 8, fontSize: 14, color: 'var(--color-text-primary)' }}>{title}</h3>
       <div className="log-box log-history">
         {entries.map((e) => (
@@ -364,9 +406,8 @@ function CampaignTrailMap({
               <span className="campaign-map__phase">Fase {i + 1}</span>
               <span className="campaign-map__name">{phase.label}</span>
               <span className="campaign-map__meta">
-                Início 1d{startDie}
-                <br />
-                Inimigos mais fortes a cada fase
+                <span className="campaign-map__dice-line">{dicePhaseStartLine(startDie)}</span>
+                <span className="campaign-map__meta-sub">Inimigos mais fortes a cada fase</span>
               </span>
             </div>
           </div>
@@ -395,9 +436,11 @@ function StartScreen() {
   const collection = useGameStore((s) => s.collection)
   const startCampaign = useGameStore((s) => s.startCampaign)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [achievementsOpen, setAchievementsOpen] = useState(false)
 
   return (
     <div className="app-screen active">
+      <AchievementsModal open={achievementsOpen} onClose={() => setAchievementsOpen(false)} />
       <EvolutionsGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
       <div className="card" style={{ textAlign: 'center', padding: '2rem 1.5rem' }}>
         <h1 className="start-screen-logo-heading">
@@ -416,11 +459,29 @@ function StartScreen() {
         <p style={{ marginBottom: '1rem' }}>
           Você é um alquimista que desce à <strong>Fenda Elemental</strong>: uma dungeon onde reações
           perigosas tomam forma. A trilha tem <strong>{CAMPAIGN_PHASE_COUNT} fases</strong> de{' '}
-          <strong>{TOTAL_BATTLES} câmaras</strong> cada. Entre uma fase e outra seus aprimoramentos de
-          dados zeram, mas você mantém <strong>PV máximo, PV atual e vidas</strong>; a cada fase você
-          recomeça com um <strong>dado inicial um tier acima</strong> (1d4 → 1d6 → 1d8) e inimigos mais
-          duros.
+          <strong>{TOTAL_BATTLES} câmaras</strong> cada. Ao cruzar a fronteira você mantém{' '}
+          <strong>PV máximo, PV atual e vidas</strong>, recebe o <strong>🎲 dado inicial maior</strong> da
+          próxima fase e escolhe <strong>um catalisador</strong> da mesa para levar; o restante fica para
+          trás (
+          {diceFriendlyOneDieOf(4)} → {diceFriendlyOneDieOf(6)} → {diceFriendlyOneDieOf(8)} como base por
+          fase) e os inimigos ficam mais duros.
         </p>
+        <div className="card dice-onboarding-hint">
+          <h3 className="dice-onboarding-hint__title">🎲 O que significa 1d4, 1d6…?</h3>
+          <p className="dice-onboarding-hint__p">
+            Aqui <strong>dado</strong> é o que você rola para causar dano. O número depois do “d” indica
+            quantas faces o dado tem — é o jeito que jogos de mesa costumam escrever.
+          </p>
+          <ul className="dice-onboarding-hint__list">
+            <li>
+              <strong>1d4</strong> = 🎲 <strong>um dado de 4 faces</strong> (sorteia 1, 2, 3 ou 4)
+            </li>
+            <li>
+              <strong>2d6</strong> = 🎲 <strong>dois dados de 6 faces</strong>; cada um tira de 1 a 6 e os
+              resultados <strong>somam</strong> no dano
+            </li>
+          </ul>
+        </div>
         <CampaignTrailMap doneThrough={-1} pulsePhase={0} />
         <div
           style={{
@@ -446,19 +507,28 @@ function StartScreen() {
           >
             📖 Ver evoluções possíveis
           </button>
+          <button
+            type="button"
+            onClick={() => setAchievementsOpen(true)}
+            style={{ padding: '10px 20px', fontSize: 14 }}
+          >
+            🏆 Conquistas
+          </button>
         </div>
       </div>
       <div className="card">
-        <h3 style={{ marginBottom: 8 }}>Seus catalisadores (dados)</h3>
+        <h3 style={{ marginBottom: 8 }}>Seus catalisadores (🎲 dados na mesa)</h3>
         <CollectionGrid dice={collection} />
       </div>
       <div className="card">
         <h3 style={{ marginBottom: 6 }}>Como funciona</h3>
         <p>
           Os duelos se resolvem sozinhos, rodada a rodada. Em cada fase você desce {TOTAL_BATTLES}{' '}
-          câmaras; ao limpar a décima, a trilha avança (sem escolher upgrade na fronteira: catalisadores
-          resetam para o dado inicial da próxima fase). Você pode gravar <strong>efeitos especiais</strong>{' '}
-          nos dados. Cada dado rolado devolve 1 PV a quem o lançou (até o máximo). Ao{' '}
+          câmaras; ao limpar a décima, a trilha avança. Na fronteira você escolhe{' '}
+          <strong>1 catalisador</strong> para manter além do 🎲 dado novo da fase. Você pode gravar{' '}
+          <strong>efeitos especiais</strong>{' '}
+          nos dados. Cada <strong>dado</strong> que aparece na tela (🎲) devolve 1 PV a quem o lançou (até o
+          máximo). Ao{' '}
           <strong>vencer</strong> uma câmara e escolher upgrade, seu limite sobe{' '}
           <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> (início: {PLAYER_BASE_HP}). Você tem 3
           vidas para toda a campanha.
@@ -500,62 +570,26 @@ function BattleScreen() {
 
   return (
     <div className={`app-screen active campaign-phase-bg ${phaseTheme.bgClass}`}>
-      <div className="card" style={{ padding: '0.75rem 1.25rem' }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 12,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <PlayerAvatar battlesWon={runStats.battlesWon} />
-            <div>
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 500,
-                color: 'var(--color-text-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                flexWrap: 'wrap',
-              }}
-            >
-              <span style={{ fontSize: 22, lineHeight: 1 }} aria-hidden>
-                {phaseTheme.icon}
+      <div className="card battle-hud-card">
+        <div className="battle-hud-row">
+          <div className="battle-hud-main">
+            <PlayerAvatar battlesWon={runStats.battlesWon} className="battle-hud-avatar" />
+            <div className="battle-hud-text">
+              <span className="battle-hud-title">
+                <span className="battle-hud-phase-icon" aria-hidden>
+                  {phaseTheme.icon}
+                </span>
+                <span>
+                  Fase {campaignPhase + 1}/{CAMPAIGN_PHASE_COUNT} · Câmara {battleIndex + 1}/{TOTAL_BATTLES}
+                </span>
               </span>
-              <span>
-                Fase {campaignPhase + 1} de {CAMPAIGN_PHASE_COUNT} · Câmara {battleIndex + 1} de{' '}
-                {TOTAL_BATTLES}
-              </span>
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              {phaseTheme.label}
-            </span>
-            {battlePaused && battleRunning ? (
-              <span
-                className="pause-badge"
-                style={{
-                  display: 'inline-block',
-                  marginTop: 6,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: '0.04em',
-                  color: '#854f0b',
-                  background: 'var(--color-background-warning)',
-                  padding: '2px 8px',
-                  borderRadius: 4,
-                }}
-              >
-                PAUSADO
-              </span>
-            ) : null}
+              <span className="battle-hud-sub">{phaseTheme.label}</span>
+              {battlePaused && battleRunning ? (
+                <span className="pause-badge battle-hud-pause">PAUSADO</span>
+              ) : null}
             </div>
           </div>
-          <div className="hearts">
+          <div className="hearts battle-hud-hearts" aria-label={`Vidas: ${lives} de 3`}>
             {[1, 2, 3].map((i) => (
               <span key={i} className="heart">
                 {i <= lives ? '❤️' : '🖤'}
@@ -567,7 +601,13 @@ function BattleScreen() {
 
       <div className="fighter-row">
         <div className="fighter fighter--player">
-          <div className="name">Alquimista</div>
+          <div className="fighter-identity fighter-identity--player">
+            <PlayerAvatar battlesWon={runStats.battlesWon} className="fighter-panel-avatar" />
+            <div className="fighter-identity-text">
+              <div className="name">Alquimista</div>
+              <span className="fighter-role">Você</span>
+            </div>
+          </div>
           <div className="player-hp-block">
             <div className="hp-bar-stack">
               <div className="hp-popup-stack">
@@ -597,9 +637,20 @@ function BattleScreen() {
             {playerRolls.length > 0 ? `Total: ${totalRoll(playerRolls)}` : ''}
           </div>
         </div>
-        <div className="vs-label">VS</div>
+        <div className="vs-label" aria-hidden>
+          VS
+        </div>
         <div className="fighter fighter--enemy">
-          <div className="name">{enemy?.name ?? '…'}</div>
+          <div className="fighter-identity fighter-identity--enemy">
+            <EnemyAvatar
+              battleIndex={battleIndex}
+              enemyName={enemy?.name ?? 'Guardião da Fenda'}
+            />
+            <div className="fighter-identity-text">
+              <div className="name">{enemy?.name ?? '…'}</div>
+              <span className="fighter-role">Inimigo</span>
+            </div>
+          </div>
           <div className="enemy-hp-block">
             <div className="hp-bar-stack">
               <div className="hp-popup-stack">
@@ -641,17 +692,95 @@ function BattleScreen() {
         </div>
       </div>
 
-      <div style={{ textAlign: 'center' }}>
+      <div className="battle-actions">
         <button
           type="button"
+          className="battle-action-btn"
           onClick={toggleBattlePause}
           disabled={!battleRunning}
-          style={{ marginRight: 8 }}
         >
           {battlePaused ? '▶ Continuar' : '⏸ Pausar'}
         </button>
-        <button type="button" onClick={toggleSpeed}>
+        <button type="button" className="battle-action-btn" onClick={toggleSpeed}>
           {speed === 1 ? '⚡ Acelerar' : '🐢 Normal'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PostBattleScreen() {
+  const campaignPhase = useGameStore((s) => s.campaignPhase)
+  const battleIndex = useGameStore((s) => s.battleIndex)
+  const enemies = useGameStore((s) => s.enemies)
+  const lastBattleWon = useGameStore((s) => s.lastBattleWon)
+  const lives = useGameStore((s) => s.lives)
+  const runStats = useGameStore((s) => s.runStats)
+  const continueFromPostBattle = useGameStore((s) => s.continueFromPostBattle)
+
+  const enemy = enemies[battleIndex]
+  const phaseTheme = getCampaignPhaseTheme(campaignPhase)
+  const phaseComplete = lastBattleWon && battleIndex === TOTAL_BATTLES - 1
+  const campaignComplete = phaseComplete && campaignPhase === CAMPAIGN_PHASE_COUNT - 1
+
+  let nextHint: string
+  if (!lastBattleWon) {
+    nextHint = 'Em seguida: o grimório oferece um aprimoramento antes de repetir esta câmara.'
+  } else if (campaignComplete) {
+    nextHint = 'Em seguida: o desfecho da sua trilha na Fenda.'
+  } else if (phaseComplete) {
+    nextHint = 'Em seguida: fronteira da fase — escolha um catalisador para carregar.'
+  } else {
+    nextHint = 'Em seguida: escolha um aprimoramento no grimório.'
+  }
+
+  return (
+    <div className={`app-screen active campaign-phase-bg ${phaseTheme.bgClass}`}>
+      <div
+        className={`card post-battle-card${lastBattleWon ? ' post-battle-card--win' : ' post-battle-card--loss'}`}
+      >
+        <div className="post-battle-hero" aria-hidden>
+          {lastBattleWon ? (
+            <span className="post-battle-trophy">🏆</span>
+          ) : (
+            <span className="post-battle-mark">⚗️</span>
+          )}
+        </div>
+        <div className="post-battle-avatar-row">
+          <PlayerAvatar battlesWon={runStats.battlesWon} emphasize={lastBattleWon} />
+        </div>
+        <h2 className="post-battle-title">{lastBattleWon ? 'Parabéns!' : 'Confronto encerrado'}</h2>
+        {lastBattleWon ? (
+          <p className="post-battle-lead">
+            {phaseComplete ? (
+              <>
+                Você <strong>encerrou esta fase</strong> da Fenda
+                {campaignComplete ? ' e toda a campanha' : ''}. Vitória sobre{' '}
+                <strong>{enemy?.name ?? 'o guardião'}</strong>.
+              </>
+            ) : (
+              <>
+                <strong>{enemy?.name ?? 'O guardião'}</strong> cedeu à sua mesa. Câmara{' '}
+                <strong>
+                  {battleIndex + 1} / {TOTAL_BATTLES}
+                </strong>{' '}
+                dominada nesta etapa.
+              </>
+            )}
+          </p>
+        ) : (
+          <p className="post-battle-lead">
+            <strong>{enemy?.name ?? 'O guardião'}</strong> prevaleceu desta vez. Restam{' '}
+            <strong>{lives}</strong> {lives === 1 ? 'vida' : 'vidas'}.
+          </p>
+        )}
+        <p className="post-battle-next-hint">{nextHint}</p>
+        <button
+          type="button"
+          className="btn-primary post-battle-continue"
+          onClick={() => continueFromPostBattle()}
+        >
+          Continuar
         </button>
       </div>
     </div>
@@ -669,9 +798,11 @@ function UpgradeScreen() {
   const runStats = useGameStore((s) => s.runStats)
   const phaseTheme = getCampaignPhaseTheme(campaignPhase)
 
+  const modalTitleId = 'upgrade-choice-modal-title'
+
   return (
     <div className={`app-screen active campaign-phase-bg ${phaseTheme.bgClass}`}>
-      <div className="card" style={{ textAlign: 'center' }}>
+      <div className="card upgrade-screen-summary" style={{ textAlign: 'center' }}>
         <PlayerAvatar battlesWon={runStats.battlesWon} emphasize={lastBattleWon} />
         <div className="result-icon" aria-hidden>
           {lastBattleWon ? '📜' : '💀'}
@@ -691,38 +822,69 @@ function UpgradeScreen() {
         </h2>
         <p>
           {lastBattleWon
-            ? 'Anote um novo traço no grimório: escolha um aprimoramento para seus catalisadores.'
+            ? 'Anote um novo traço no grimório: a escolha de aprimoramento abre em destaque.'
             : `${lives} tentativa(s) restante(s). A Fenda não perdoa; adapte sua mesa mesmo assim.`}
         </p>
       </div>
 
-      <BattleLogHistory entries={lastBattleLog} title="Histórico da última câmara" />
+      <div className="upgrade-choice-modal-backdrop" role="presentation">
+        <div
+          className="upgrade-choice-modal-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={modalTitleId}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="upgrade-choice-modal-header">
+            <p className="upgrade-choice-modal-kicker" aria-hidden>
+              ✦ Grimório
+            </p>
+            <h2 id={modalTitleId} className="upgrade-choice-modal-title">
+              Escolha um aprimoramento
+            </h2>
+            <p className="upgrade-choice-modal-lead">
+              {lastBattleWon
+                ? 'Toque em uma das três cartas para gravar o efeito na sua mesa. A 1ª opção é sempre o caminho fixo de progressão.'
+                : 'Mesmo após uma falha, a Fenda oferece um aprimoramento — escolha com cuidado.'}
+            </p>
+          </div>
 
-      <div className="card">
-        <h3 style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          Estudo: escolha um aprimoramento
-        </h3>
-        <div className="upgrade-grid" style={{ marginTop: 10 }}>
-          {pendingUpgrades.map((u, i) => (
-            <button
-              type="button"
-              key={i}
-              className="upgrade-card"
-              onClick={() => applyUpgrade(i)}
-            >
-              <div className="icon">{u.icon}</div>
-              <div className="title">{u.label}</div>
-              <div className="desc">{u.desc}</div>
-            </button>
-          ))}
+          <div className="upgrade-choice-modal-body">
+            <div className="upgrade-grid upgrade-grid--modal">
+              {pendingUpgrades.map((u, i) => (
+                <button
+                  type="button"
+                  key={i}
+                  className={`upgrade-card upgrade-card--slot-${i}`}
+                  onClick={() => applyUpgrade(i)}
+                >
+                  <span className="upgrade-card-slot-label">
+                    {i === 0 ? 'Opção 1 · Progressão' : `Opção ${i + 1} · Sorteio`}
+                  </span>
+                  <div className="icon">{u.icon}</div>
+                  <div className="title">{u.label}</div>
+                  <div className="desc">{u.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="upgrade-choice-modal-meta">
+              <h3 className="upgrade-choice-modal-meta-title">Eco na masmorra</h3>
+              <p className="upgrade-choice-modal-meta-desc">
+                O próximo guardião também evolui automaticamente:
+              </p>
+              <div className="enemy-evolve-note upgrade-choice-enemy-note">{enemyUpgradePreview}</div>
+            </div>
+
+            <div className="upgrade-choice-modal-log">
+              <BattleLogHistory
+                entries={lastBattleLog}
+                title="Histórico da última câmara"
+                className="upgrade-choice-log-card"
+              />
+            </div>
+          </div>
         </div>
-      </div>
-
-      <div className="card" style={{ opacity: 0.85 }}>
-        <h3 style={{ marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-          Eco na masmorra (o próximo guardião evolui)
-        </h3>
-        <div className="enemy-evolve-note">{enemyUpgradePreview}</div>
       </div>
     </div>
   )
@@ -731,10 +893,16 @@ function UpgradeScreen() {
 function PhaseBridgeScreen() {
   const campaignPhase = useGameStore((s) => s.campaignPhase)
   const beginNextCampaignPhase = useGameStore((s) => s.beginNextCampaignPhase)
+  const collection = useGameStore((s) => s.collection)
   const playerHp = useGameStore((s) => s.playerHp)
   const playerHpMax = useGameStore((s) => s.playerHpMax)
   const lives = useGameStore((s) => s.lives)
   const runStats = useGameStore((s) => s.runStats)
+
+  const [carryDiceIdx, setCarryDiceIdx] = useState(0)
+  useEffect(() => {
+    setCarryDiceIdx(defaultPhaseCarryDiceIndex(collection))
+  }, [collection])
 
   const nextPhase = campaignPhase + 1
   const nextDie = DICE_TYPES[Math.min(nextPhase, DICE_TYPES.length - 1)]
@@ -753,14 +921,66 @@ function PhaseBridgeScreen() {
           <strong>
             <span aria-hidden>{doneTheme.icon}</span> {doneTheme.label}
           </strong>{' '}
-          foi selada ({TOTAL_BATTLES} câmaras). Seus
-          catalisadores perdem as marcas deste trecho: na próxima etapa você começa só com{' '}
-          <strong>1d{nextDie}</strong>. O que permanece é seu corpo adaptado:{' '}
+          foi selada ({TOTAL_BATTLES} câmaras). Na próxima etapa você recebe{' '}
+          <strong>{diceFriendlyOneDieOf(nextDie)}</strong>{' '}
+          <span style={{ fontSize: 12, opacity: 0.9 }}>(notação {diceNotationOne(nextDie)})</span> e leva{' '}
+          <strong>mais um catalisador</strong> à sua escolha da mesa abaixo. O que permanece do corpo:{' '}
           <strong>
             {playerHp} / {playerHpMax} PV
           </strong>{' '}
           e <strong>{lives}</strong> vida(s).
         </p>
+
+        <div className="phase-bridge-carry" role="group" aria-label="Escolha um catalisador para carregar">
+          <h3 className="phase-bridge-carry-title">Levar para a próxima fase</h3>
+          <p className="phase-bridge-carry-hint">
+            Toque em um dado para selecionar. Os outros não atravessam a fronteira.
+          </p>
+          <div className="phase-bridge-carry-grid">
+            {collection.map((d, i) => {
+              const hasSp = d.special.length > 0
+              const selected = i === carryDiceIdx
+              return (
+                <button
+                  type="button"
+                  key={`${d.sides}-${d.count}-${i}`}
+                  className={[
+                    'phase-bridge-carry-card',
+                    'collection-die',
+                    hasSp ? 'has-special' : '',
+                    selected ? 'phase-bridge-carry-card--selected' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  aria-pressed={selected}
+                  onClick={() => setCarryDiceIdx(i)}
+                >
+                  <div className="collection-die-primary">{diceFriendlyPrimary(d)}</div>
+                  <div className="collection-die-notation" aria-hidden>
+                    {diceNotation(d)} · de 1 a {d.sides}
+                  </div>
+                  {hasSp ? (
+                    <>
+                      <span className="collection-die-icons" aria-hidden>
+                        {d.special.map((id, si) => {
+                          const sp = getSpecialById(id)
+                          return sp ? <span key={`${i}-${si}-${id}`}>{sp.icon}</span> : null
+                        })}
+                      </span>
+                      <span style={{ fontSize: 10, display: 'block', marginTop: 4 }}>
+                        {d.special
+                          .map((id) => getSpecialById(id)?.label)
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </>
+                  ) : null}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
         <CampaignTrailMap doneThrough={campaignPhase} pulsePhase={nextPhase} />
         <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', marginTop: 12 }}>
           Vitórias na campanha: {runStats.battlesWon} / {TOTAL_CAMPAIGN_CHAMBERS}
@@ -769,7 +989,7 @@ function PhaseBridgeScreen() {
           type="button"
           className="btn-primary"
           style={{ marginTop: 16, padding: '10px 28px' }}
-          onClick={() => beginNextCampaignPhase()}
+          onClick={() => beginNextCampaignPhase(carryDiceIdx)}
         >
           Continuar para {nextTheme.icon} {nextTheme.label}
         </button>
@@ -787,19 +1007,43 @@ function EndScreen() {
   const runStats = useGameStore((s) => s.runStats)
 
   return (
-    <div className="app-screen active">
-      <div className="card" style={{ textAlign: 'center', padding: '2rem' }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>{endVictory ? '⚗️' : '💀'}</div>
-        <h2>
-          {endVictory
-            ? 'Maestria elementar'
-            : 'A Fenda consumiu sua última chance'}
-        </h2>
-        <p style={{ marginTop: 8 }}>
-          {endVictory
-            ? `Você atravessou as ${CAMPAIGN_PHASE_COUNT} fases (${TOTAL_CAMPAIGN_CHAMBERS} câmaras) e estabilizou o núcleo da Fenda. Seu grimório está completo, por ora.`
-            : 'O conhecimento que buscava escapou entre os dedos. Volte ao laboratório, ou tente outra descida.'}
-        </p>
+    <div className={`app-screen active end-screen ${endVictory ? 'end-screen--victory' : 'end-screen--defeat'}`}>
+      <div className="card end-screen-hero">
+        {endVictory ? (
+          <>
+            <div className="end-screen-badge" aria-hidden>
+              🏆
+            </div>
+            <p className="end-screen-ribbon">Trilha completa</p>
+            <div className="end-screen-emoji-row" aria-hidden>
+              ⚗️ ✨ 🎲
+            </div>
+            <h2 className="end-screen-title">Maestria elementar</h2>
+            <p className="end-screen-lead">
+              Você atravessou as <strong>{CAMPAIGN_PHASE_COUNT} fases</strong> (
+              <strong>{TOTAL_CAMPAIGN_CHAMBERS} câmaras</strong>) e estabilizou o núcleo da Fenda. A mesa
+              obedeceu: seu grimório está completo — por ora — e cada 🎲 dado que você moldou conta uma
+              história de sobrevivência.
+            </p>
+            <p className="end-screen-sub">Obrigado por jogar. Até a próxima descida.</p>
+          </>
+        ) : (
+          <>
+            <div className="end-screen-grave" aria-hidden>
+              <span className="end-screen-grave__mound" />
+              <span className="end-screen-grave__coffin">⚰️</span>
+              <span className="end-screen-grave__stone">🪦</span>
+              <span className="end-screen-grave__skull">💀</span>
+            </div>
+            <p className="end-screen-epitaph">Aqui jaz a última tentativa na Fenda</p>
+            <h2 className="end-screen-title end-screen-title--defeat">Trilha encerrada</h2>
+            <p className="end-screen-lead">
+              As três vidas se esgotaram. A escuridão da Fenda não devolve o que engole — só resta marcar a
+              cova, respirar e, se quiser, subir de novo com 🎲 dados novos na mão.
+            </p>
+            <p className="end-screen-sub">Volte ao laboratório quando estiver pronto para outra descida.</p>
+          </>
+        )}
       </div>
 
       <BattleLogHistory entries={lastBattleLog} title="Histórico da última câmara" />
@@ -807,7 +1051,7 @@ function EndScreen() {
       <RunStatsSummary stats={runStats} />
 
       <div className="card">
-        <h3 style={{ marginBottom: 8 }}>Catalisadores ao fim da run</h3>
+        <h3 style={{ marginBottom: 8 }}>🎲 Catalisadores ao fim da run</h3>
         <CollectionGrid dice={collection} />
       </div>
       <div
@@ -843,6 +1087,7 @@ export default function App() {
     <>
       {screen === 'start' ? <StartScreen /> : null}
       {screen === 'battle' ? <BattleScreen /> : null}
+      {screen === 'post_battle' ? <PostBattleScreen /> : null}
       {screen === 'upgrade' ? <UpgradeScreen /> : null}
       {screen === 'phase_bridge' ? <PhaseBridgeScreen /> : null}
       {screen === 'end' ? <EndScreen /> : null}

@@ -63,7 +63,8 @@ export function rollDie(
     rerollsLeft--
   }
 
-  let bonus = 0
+  let bonusCrit = 0
+  let bonusSpecial = 0
   let isCrit = false
   let msg: string | null = null
   let healAmount = 0
@@ -74,12 +75,12 @@ export function rollDie(
 
   const nSteady = countSpecial(specials, 'steady')
   if (nSteady > 0) {
-    bonus += nSteady
+    bonusSpecial += nSteady
   }
 
   const nDoubleMax = countSpecial(specials, 'double_max')
   if (nDoubleMax > 0 && val === sides) {
-    bonus += sides * nDoubleMax
+    bonusCrit += sides * nDoubleMax
     isCrit = true
     msg = pushMsg(
       msg,
@@ -91,14 +92,14 @@ export function rollDie(
 
   const nExplode = countSpecial(specials, 'explode')
   if (nExplode > 0 && val === sides) {
-    bonus += 3 * nExplode
+    bonusCrit += 3 * nExplode
     isCrit = true
     msg = pushMsg(msg, nExplode > 1 ? `explosão ×${nExplode}! +${3 * nExplode}` : 'explosão! +3')
   }
 
   const nGlass = countSpecial(specials, 'glass')
   if (nGlass > 0 && val === sides) {
-    bonus += 5 * nGlass
+    bonusCrit += 5 * nGlass
     isCrit = true
     msg = pushMsg(msg, nGlass > 1 ? `vidro ×${nGlass}! +${5 * nGlass}` : 'vidro! +5')
   }
@@ -123,45 +124,45 @@ export function rollDie(
 
   const nDesperate = countSpecial(specials, 'desperate')
   if (nDesperate > 0 && val === 1) {
-    bonus += 3 * nDesperate
+    bonusSpecial += 3 * nDesperate
     msg = pushMsg(msg, nDesperate > 1 ? `desespero +${3 * nDesperate}` : 'desespero +3')
   }
 
   const nTempest = countSpecial(specials, 'tempest')
   if (nTempest > 0 && (val === 1 || val === sides)) {
-    bonus += 2 * nTempest
+    bonusSpecial += 2 * nTempest
     msg = pushMsg(msg, nTempest > 1 ? `tempestade +${2 * nTempest}` : 'tempestade +2')
   }
 
   const nBrink = countSpecial(specials, 'brink')
   if (nBrink > 0 && sides > 2 && (val === 2 || val === sides - 1)) {
-    bonus += 2 * nBrink
+    bonusSpecial += 2 * nBrink
     msg = pushMsg(msg, nBrink > 1 ? `limiar +${2 * nBrink}` : 'limiar +2')
   }
 
   const pulseGate = Math.ceil((2 * sides) / 3)
   const nPulse = countSpecial(specials, 'pulse')
   if (nPulse > 0 && val >= pulseGate) {
-    bonus += 2 * nPulse
+    bonusSpecial += 2 * nPulse
     msg = pushMsg(msg, nPulse > 1 ? `pulso +${2 * nPulse}` : 'pulso +2')
   }
 
   const halfOrMore = val >= Math.ceil(sides / 2)
   const nHighHalf = countSpecial(specials, 'high_half')
   if (nHighHalf > 0 && halfOrMore) {
-    bonus += 2 * nHighHalf
+    bonusSpecial += 2 * nHighHalf
     msg = pushMsg(msg, nHighHalf > 1 ? `valor alto +${2 * nHighHalf}` : 'valor alto +2')
   }
 
   const nEven = countSpecial(specials, 'even_strike')
   if (nEven > 0 && val % 2 === 0) {
-    bonus += nEven
+    bonusSpecial += nEven
     msg = pushMsg(msg, nEven > 1 ? `par +${nEven}` : 'par +1')
   }
 
   const nOdd = countSpecial(specials, 'odd_strike')
   if (nOdd > 0 && val % 2 === 1) {
-    bonus += nOdd
+    bonusSpecial += nOdd
     msg = pushMsg(msg, nOdd > 1 ? `ímpar +${nOdd}` : 'ímpar +1')
   }
 
@@ -178,9 +179,13 @@ export function rollDie(
     msg = pushMsg(msg, 'abertura crítica!')
   }
 
+  const bonus = bonusCrit + bonusSpecial
+
   return {
     val,
     bonus,
+    bonusCrit,
+    bonusSpecial,
     total: val + bonus,
     isCrit,
     isHeal: healAmount > 0,
@@ -210,18 +215,21 @@ export function totalRoll(rolls: RollResult[]) {
   return rolls.reduce((s, r) => s + r.total, 0)
 }
 
-/** Soma das faces (valor base) vs bônus de efeitos especiais por rolagem. */
+/** Soma das faces vs bônus de crítico (face máxima) vs demais catalisadores. */
 export function splitDamageFromRolls(rolls: RollResult[]): {
   base: number
-  bonus: number
+  bonusCrit: number
+  bonusSpecial: number
 } {
   let base = 0
-  let bonus = 0
+  let bonusCrit = 0
+  let bonusSpecial = 0
   for (const r of rolls) {
     base += r.val
-    bonus += r.bonus
+    bonusCrit += r.bonusCrit
+    bonusSpecial += r.bonusSpecial
   }
-  return { base, bonus }
+  return { base, bonusCrit, bonusSpecial }
 }
 
 export function sumHealFromRolls(rolls: RollResult[]) {
