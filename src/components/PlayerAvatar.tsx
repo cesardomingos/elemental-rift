@@ -6,7 +6,7 @@ import {
   IDLE_DOWN_FRAME_W,
   IDLE_DOWN_URL,
 } from '../game/avatar'
-import { TOTAL_BATTLES } from '../game/constants'
+import { TOTAL_CAMPAIGN_CHAMBERS } from '../game/constants'
 
 type Props = {
   battlesWon: number
@@ -30,7 +30,7 @@ export function PlayerAvatar({ battlesWon, emphasize, className = '', featured }
     .filter(Boolean)
     .join(' ')
 
-  const label = `Alquimista — vitórias: ${battlesWon} de ${TOTAL_BATTLES}`
+  const label = `Alquimista, vitórias: ${battlesWon} de ${TOTAL_CAMPAIGN_CHAMBERS}`
 
   if (tier === 0) {
     const scale = featured ? 1.05 : 0.75

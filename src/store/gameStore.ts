@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import {
+  CAMPAIGN_PHASE_COUNT,
   DICE_TYPES,
   PLAYER_BASE_HP,
   PLAYER_HP_GROWTH_PER_BATTLE,
@@ -7,8 +8,15 @@ import {
   TOTAL_BATTLES,
   createRunEnemies,
   getSpecialById,
+  startingCollectionForPhase,
 } from '../game/constants'
-import { rollAllDice, sumHealFromRolls, totalRoll } from '../game/dice'
+import {
+  poisonStacksGainedFromRolls,
+  rollAllDice,
+  splitDamageFromRolls,
+  sumHealFromRolls,
+  totalRoll,
+} from '../game/dice'
 import type {
   DieInstance,
   EnemyTemplate,
@@ -17,6 +25,8 @@ import type {
   RunStats,
   Screen,
   UpgradeOption,
+  RoundDamagePopup,
+  RoundHealPopup,
 } from '../game/types'
 import { emptyRunStats } from '../game/types'
 import {
@@ -27,10 +37,6 @@ import {
 } from '../audio/feedbackSfx'
 
 let battleAbortController: AbortController | null = null
-
-function initCollection(): DieInstance[] {
-  return [{ sides: 4, count: 1, special: null }]
-}
 
 function logId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -79,63 +85,119 @@ async function delayBattle(
   return true
 }
 
-function shuffleArray<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
-
 function upgradesEquivalent(a: UpgradeOption, b: UpgradeOption): boolean {
   if (a.type !== b.type) return false
-  if (a.type === 'add_special') return a.special === b.special
+  if (a.type === 'add_special' || a.type === 'replace_special')
+    return a.special === b.special
   return true
 }
 
-/** Opções que podem aparecer nos slots 2 e 3 (sorteadas). */
-function buildRandomUpgradePool(collection: DieInstance[]): UpgradeOption[] {
-  const pool: UpgradeOption[] = [
-    {
-      type: 'add_die',
-      icon: '🎲',
-      label: 'Novo dado d4',
-      desc: 'Adiciona 1d4 extra à coleção',
-    },
-    {
-      type: 'add_count',
-      icon: '➕',
-      label: 'Mais um dado (maior tipo)',
-      desc: 'Adiciona +1 dado ao maior tipo',
-    },
-  ]
-  if (collection.some((di) => !di.special)) {
-    for (const sp of SPECIALS) {
-      pool.push({
+function canApplyReplaceSpecial(collection: DieInstance[], specialId: string): boolean {
+  return collection.some((d) => d.special.some((s) => s !== specialId))
+}
+
+/**
+ * Próximo add_special vai ao dado com menos marcas; em empate, ao mais à direita
+ * (catalisador principal / último da coleção) para favorecer acúmulo desde o início.
+ */
+function pickDieIndexForNewSpecial(col: DieInstance[]): number {
+  if (col.length === 0) return 0
+  let minLen = Infinity
+  for (const d of col) minLen = Math.min(minLen, d.special.length)
+  for (let i = col.length - 1; i >= 0; i--) {
+    if (col[i].special.length === minLen) return i
+  }
+  return col.length - 1
+}
+
+type WeightedUpgrade = { opt: UpgradeOption; w: number }
+
+/**
+ * Candidatos aos slots 2 e 3 com pesos. Especiais podem acumular; add_special entra sempre.
+ * replace_special aparece quando já existe marca para regravar.
+ */
+function buildWeightedRandomPool(
+  collection: DieInstance[],
+  fixed: UpgradeOption,
+): WeightedUpgrade[] {
+  const out: WeightedUpgrade[] = []
+
+  const addDie: UpgradeOption = {
+    type: 'add_die',
+    icon: '🎲',
+    label: 'Novo dado d4',
+    desc: 'Adiciona 1d4 extra à coleção',
+  }
+  const addCount: UpgradeOption = {
+    type: 'add_count',
+    icon: '➕',
+    label: 'Mais um dado (maior tipo)',
+    desc: 'Adiciona +1 dado ao maior tipo',
+  }
+
+  out.push({ opt: addDie, w: 2.4 })
+  out.push({ opt: addCount, w: 0.68 })
+
+  for (const sp of SPECIALS) {
+    out.push({
+      w: 1.02,
+      opt: {
         type: 'add_special',
         icon: sp.icon,
         label: sp.label,
         desc: sp.desc,
         special: sp.id,
+      },
+    })
+  }
+
+  const hasAnySpecial = collection.some((d) => d.special.length > 0)
+  if (hasAnySpecial) {
+    for (const sp of SPECIALS) {
+      if (!canApplyReplaceSpecial(collection, sp.id)) continue
+      out.push({
+        w: 1.05,
+        opt: {
+          type: 'replace_special',
+          icon: sp.icon,
+          label: `Regravar: ${sp.label}`,
+          desc: `Uma única marca já inscrita em algum catalisador passa a ser ${sp.label}; as outras marcas do mesmo dado permanecem.`,
+          special: sp.id,
+        },
       })
     }
   }
-  return pool
+
+  return out.filter((x) => !upgradesEquivalent(x.opt, fixed))
 }
 
-function pickTwoRandomUpgrades(
+function pickTwoWeightedUpgrades(
   collection: DieInstance[],
   fixed: UpgradeOption,
 ): UpgradeOption[] {
-  const pool = shuffleArray(
-    buildRandomUpgradePool(collection).filter((p) => !upgradesEquivalent(p, fixed)),
-  )
+  const working = [...buildWeightedRandomPool(collection, fixed)]
   const picked: UpgradeOption[] = []
-  for (const p of pool) {
-    if (picked.length >= 2) break
-    if (!picked.some((x) => upgradesEquivalent(x, p))) picked.push(p)
+
+  for (let k = 0; k < 2 && working.length > 0; k++) {
+    const total = working.reduce((s, x) => s + x.w, 0)
+    if (total <= 0) break
+    let r = Math.random() * total
+    let chosenIdx = 0
+    for (let i = 0; i < working.length; i++) {
+      r -= working[i].w
+      if (r <= 0) {
+        chosenIdx = i
+        break
+      }
+    }
+    const chosen = working[chosenIdx]
+    picked.push(chosen.opt)
+    working.splice(chosenIdx, 1)
+    for (let i = working.length - 1; i >= 0; i--) {
+      if (upgradesEquivalent(working[i].opt, chosen.opt)) working.splice(i, 1)
+    }
   }
+
   const safeFallback: UpgradeOption = {
     type: 'add_die',
     icon: '🎲',
@@ -167,7 +229,19 @@ function generateUpgrades(collection: DieInstance[]): UpgradeOption[] {
           desc: 'Adiciona +1 dado ao maior tipo',
         }
 
-  return [fixed, ...pickTwoRandomUpgrades(collection, fixed)]
+  const picked = pickTwoWeightedUpgrades(collection, fixed)
+  const hasSpecialCard = picked.some((u) => u.type === 'add_special')
+  if (!hasSpecialCard) {
+    const sp = SPECIALS[Math.floor(Math.random() * SPECIALS.length)]
+    picked[1] = {
+      type: 'add_special',
+      icon: sp.icon,
+      label: sp.label,
+      desc: sp.desc,
+      special: sp.id,
+    }
+  }
+  return [fixed, ...picked]
 }
 
 function generateEnemyUpgrade(enemy: EnemyTemplate): UpgradeOption {
@@ -217,12 +291,15 @@ function applyEnemyUpgradeToNext(
   } else if (u.type === 'add_hp') {
     next.hp += 8
   } else if (u.type === 'add_special' && u.special) {
-    next.dice[0].special = u.special
+    const d0 = next.dice[0]
+    d0.special = [...d0.special, u.special]
   }
 }
 
 interface GameState {
   screen: Screen
+  /** Índice 0..CAMPAIGN_PHASE_COUNT-1 da trilha atual. */
+  campaignPhase: number
   collection: DieInstance[]
   lives: number
   battleIndex: number
@@ -240,29 +317,41 @@ interface GameState {
   speed: number
   battleSessionId: number
   battleRound: number
+  /** Acúmulos de veneno no inimigo (1 PV no início de cada rodada por acúmulo). */
+  enemyPoisonStacks: number
+  /** Acúmulos de veneno no jogador. */
+  playerPoisonStacks: number
+  /** Dano que você causou ao inimigo na última rodada (UI). */
+  enemyDamagePopup: RoundDamagePopup | null
+  /** Dano que o inimigo causou em você na última rodada (UI). */
+  playerDamagePopup: RoundDamagePopup | null
+  playerHealPopup: RoundHealPopup | null
+  enemyHealPopup: RoundHealPopup | null
   pendingUpgrades: UpgradeOption[]
   enemyUpgradePreview: string
   lastBattleWon: boolean
   endVictory: boolean
   lastBattleLog: LogEntry[]
   runStats: RunStats
-  startRun: () => void
+  startCampaign: () => void
   goToStart: () => void
+  beginNextCampaignPhase: () => void
   startBattle: () => void
   toggleSpeed: () => void
   toggleBattlePause: () => void
-  skipBattle: () => void
   applyUpgrade: (idx: number) => void
   runBattleAsync: (signal: AbortSignal) => Promise<void>
   processOneTurn: (signal: AbortSignal) => Promise<'continue' | 'end' | 'aborted'>
   endBattle: () => void
   showUpgradeAfterBattle: (won: boolean) => void
+  showPhaseBridge: () => void
   showEndScreen: (victory: boolean) => void
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
   screen: 'start',
-  collection: initCollection(),
+  campaignPhase: 0,
+  collection: startingCollectionForPhase(0),
   lives: 3,
   battleIndex: 0,
   enemies: [],
@@ -279,6 +368,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   speed: 1,
   battleSessionId: 0,
   battleRound: 0,
+  enemyPoisonStacks: 0,
+  playerPoisonStacks: 0,
+  enemyDamagePopup: null,
+  playerDamagePopup: null,
+  playerHealPopup: null,
+  enemyHealPopup: null,
   pendingUpgrades: [],
   enemyUpgradePreview: '',
   lastBattleWon: false,
@@ -288,22 +383,49 @@ export const useGameStore = create<GameState>((set, get) => ({
   goToStart: () => {
     battleAbortController?.abort()
     battleAbortController = null
-    set({ screen: 'start', battleRunning: false, battlePaused: false, runStats: emptyRunStats() })
+    set({
+      screen: 'start',
+      battleRunning: false,
+      battlePaused: false,
+      runStats: emptyRunStats(),
+      campaignPhase: 0,
+      collection: startingCollectionForPhase(0),
+    })
   },
 
-  startRun: () => {
+  startCampaign: () => {
     battleAbortController?.abort()
     battleAbortController = null
     set({
-      collection: initCollection(),
+      collection: startingCollectionForPhase(0),
       lives: 3,
       battleIndex: 0,
-      enemies: createRunEnemies(),
+      campaignPhase: 0,
+      enemies: createRunEnemies(0),
       playerHpMax: PLAYER_BASE_HP,
       playerHp: PLAYER_BASE_HP,
       lastBattleLog: [],
       runStats: emptyRunStats(),
       screen: 'battle',
+    })
+    get().startBattle()
+  },
+
+  beginNextCampaignPhase: () => {
+    const s = get()
+    if (s.campaignPhase >= CAMPAIGN_PHASE_COUNT - 1) return
+    battleAbortController?.abort()
+    battleAbortController = null
+    const next = s.campaignPhase + 1
+    set({
+      campaignPhase: next,
+      collection: startingCollectionForPhase(next),
+      battleIndex: 0,
+      enemies: createRunEnemies(next),
+      screen: 'battle',
+      pendingUpgrades: [],
+      lastBattleWon: false,
+      enemyUpgradePreview: '',
     })
     get().startBattle()
   },
@@ -327,6 +449,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       speed: 1,
       battleSessionId: s.battleSessionId + 1,
       battleRound: 0,
+      enemyPoisonStacks: 0,
+      playerPoisonStacks: 0,
+      enemyDamagePopup: null,
+      playerDamagePopup: null,
+      playerHealPopup: null,
+      enemyHealPopup: null,
     })
 
     void get().runBattleAsync(signal)
@@ -340,100 +468,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     const s = get()
     if (!s.battleRunning) return
     set({ battlePaused: !s.battlePaused })
-  },
-
-  skipBattle: () => {
-    const state = get()
-    if (!state.battleRunning) return
-
-    battleAbortController?.abort()
-    battleAbortController = null
-    set({ battleRunning: false, battlePaused: false })
-
-    const enemy = state.enemies[state.battleIndex]
-    let playerHp = state.playerHp
-    let enemyHp = state.enemyHp
-    const { playerHpMax, collection } = state
-    let round = 0
-
-    const enemyHpMax = enemy.hp
-
-    const acc = {
-      damageDealt: 0,
-      damageTaken: 0,
-      combatRounds: 0,
-      playerDiceRolled: 0,
-      enemyDiceRolled: 0,
-      healFromSpecials: 0,
-      enemyHealFromSpecials: 0,
-      healFromDiceRegen: 0,
-      enemyHealFromDiceRegen: 0,
-    }
-
-    while (playerHp > 0 && enemyHp > 0 && round < 200) {
-      round++
-      const playerRolls = rollAllDice(collection, {
-        currentBattleRound: round - 1,
-      })
-      const enemyRolls = rollAllDice(enemy.dice, {
-        currentBattleRound: round - 1,
-      })
-      const plSpec = sumHealFromRolls(playerRolls)
-      const enSpec = sumHealFromRolls(enemyRolls)
-      playerHp = Math.min(playerHpMax, playerHp + plSpec)
-      enemyHp = Math.min(enemyHpMax, enemyHp + enSpec)
-      const regP = playerRolls.length
-      const regE = enemyRolls.length
-      playerHp = Math.min(playerHpMax, playerHp + regP)
-      enemyHp = Math.min(enemyHpMax, enemyHp + regE)
-      const pTot = totalRoll(playerRolls)
-      const eTot = totalRoll(enemyRolls)
-      enemyHp -= pTot
-      playerHp -= eTot
-
-      acc.damageDealt += pTot
-      acc.damageTaken += eTot
-      acc.combatRounds += 1
-      acc.playerDiceRolled += playerRolls.length
-      acc.enemyDiceRolled += enemyRolls.length
-      acc.healFromSpecials += plSpec
-      acc.enemyHealFromSpecials += enSpec
-      acc.healFromDiceRegen += regP
-      acc.enemyHealFromDiceRegen += regE
-    }
-
-    set((s) => ({
-      playerHp,
-      enemyHp,
-      playerRolls: [],
-      enemyRolls: [],
-      isRolling: false,
-      battleLog: [
-        {
-          id: logId(),
-          text: '⏭ Batalha pulada!',
-          kind: 'info',
-        },
-        ...s.battleLog,
-      ],
-      runStats: {
-        ...s.runStats,
-        damageDealt: s.runStats.damageDealt + acc.damageDealt,
-        damageTaken: s.runStats.damageTaken + acc.damageTaken,
-        combatRounds: s.runStats.combatRounds + acc.combatRounds,
-        playerDiceRolled: s.runStats.playerDiceRolled + acc.playerDiceRolled,
-        enemyDiceRolled: s.runStats.enemyDiceRolled + acc.enemyDiceRolled,
-        healFromSpecials: s.runStats.healFromSpecials + acc.healFromSpecials,
-        enemyHealFromSpecials: s.runStats.enemyHealFromSpecials + acc.enemyHealFromSpecials,
-        healFromDiceRegen: s.runStats.healFromDiceRegen + acc.healFromDiceRegen,
-        enemyHealFromDiceRegen: s.runStats.enemyHealFromDiceRegen + acc.enemyHealFromDiceRegen,
-      },
-    }))
-
-    if (acc.damageTaken > 0) sfxPlayerDamaged()
-    if (acc.damageDealt > 0) sfxEnemyDamaged()
-
-    window.setTimeout(() => get().endBattle(), 400)
   },
 
   processOneTurn: async (signal) => {
@@ -468,6 +502,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     let playerHp = cur.playerHp
     let enemyHp = cur.enemyHp
     const { playerHpMax, enemyHpMax } = cur
+
+    const poisonTickToEnemy = cur.enemyPoisonStacks
+    const poisonTickToPlayer = cur.playerPoisonStacks
+    enemyHp -= poisonTickToEnemy
+    playerHp -= poisonTickToPlayer
 
     pRolls.forEach((r) => {
       if (r.msg) {
@@ -505,6 +544,15 @@ export const useGameStore = create<GameState>((set, get) => ({
     enemyHp -= pTotal
     playerHp -= eTotal
 
+    const poisonGainOnEnemy = poisonStacksGainedFromRolls(pRolls)
+    const poisonGainOnPlayer = poisonStacksGainedFromRolls(eRolls)
+
+    const { base: dmgBaseToEnemy, bonus: dmgBonusToEnemy } = splitDamageFromRolls(pRolls)
+    const { base: dmgBaseFromEnemy, bonus: dmgBonusFromEnemy } = splitDamageFromRolls(eRolls)
+    const popupSeq = cur.battleSessionId * 100000 + nextRound * 10
+    const playerHealTotal = rollHealP + plHealSpec
+    const enemyHealTotal = rollHealE + enHealSpec
+
     const logKind =
       eTotal > pTotal ? 'damage-player' : 'damage-enemy'
 
@@ -513,16 +561,60 @@ export const useGameStore = create<GameState>((set, get) => ({
         ? `💧 +${rollHealP} HP (dados) · inimigo +${rollHealE} HP`
         : null
 
+    const poisonLine =
+      poisonTickToEnemy > 0 || poisonTickToPlayer > 0
+        ? `☠️ Veneno: inimigo −${poisonTickToEnemy} PV · você −${poisonTickToPlayer} PV`
+        : null
+
     set((s) => ({
       isRolling: false,
       playerHp,
       enemyHp,
+      enemyPoisonStacks: s.enemyPoisonStacks + poisonGainOnEnemy,
+      playerPoisonStacks: s.playerPoisonStacks + poisonGainOnPlayer,
+      enemyDamagePopup:
+        pTotal > 0 || poisonTickToEnemy > 0
+          ? {
+              base: dmgBaseToEnemy,
+              bonus: dmgBonusToEnemy,
+              ...(poisonTickToEnemy > 0 ? { poison: poisonTickToEnemy } : {}),
+              seq: popupSeq + 1,
+            }
+          : null,
+      playerDamagePopup:
+        eTotal > 0 || poisonTickToPlayer > 0
+          ? {
+              base: dmgBaseFromEnemy,
+              bonus: dmgBonusFromEnemy,
+              ...(poisonTickToPlayer > 0 ? { poison: poisonTickToPlayer } : {}),
+              seq: popupSeq + 2,
+            }
+          : null,
+      playerHealPopup:
+        playerHealTotal > 0
+          ? {
+              fromDice: rollHealP,
+              fromSpecials: plHealSpec,
+              seq: popupSeq + 3,
+            }
+          : null,
+      enemyHealPopup:
+        enemyHealTotal > 0
+          ? {
+              fromDice: rollHealE,
+              fromSpecials: enHealSpec,
+              seq: popupSeq + 4,
+            }
+          : null,
       battleLog: [
         {
           id: logId(),
           text: `Rodada ${nextRound}: Você causou ${pTotal} dano · Inimigo causou ${eTotal} dano`,
           kind: logKind,
         },
+        ...(poisonLine
+          ? [{ id: logId(), text: poisonLine, kind: 'info' as const }]
+          : []),
         ...(regenLine
           ? [{ id: logId(), text: regenLine, kind: 'info' as const }]
           : []),
@@ -530,8 +622,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       ],
       runStats: {
         ...s.runStats,
-        damageDealt: s.runStats.damageDealt + pTotal,
-        damageTaken: s.runStats.damageTaken + eTotal,
+        damageDealt: s.runStats.damageDealt + pTotal + poisonTickToEnemy,
+        damageTaken: s.runStats.damageTaken + eTotal + poisonTickToPlayer,
         combatRounds: s.runStats.combatRounds + 1,
         playerDiceRolled: s.runStats.playerDiceRolled + pRolls.length,
         enemyDiceRolled: s.runStats.enemyDiceRolled + eRolls.length,
@@ -542,8 +634,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       },
     }))
 
-    if (eTotal > 0) sfxPlayerDamaged()
-    if (pTotal > 0) sfxEnemyDamaged()
+    if (eTotal > 0 || poisonTickToPlayer > 0) sfxPlayerDamaged()
+    if (pTotal > 0 || poisonTickToEnemy > 0) sfxEnemyDamaged()
 
     if (playerHp <= 0 || enemyHp <= 0) return 'end'
     return 'continue'
@@ -624,7 +716,11 @@ export const useGameStore = create<GameState>((set, get) => ({
         lastBattleLog,
         runStats: mergeEndStats(s.runStats),
       }))
-      get().showEndScreen(true)
+      if (state.campaignPhase < CAMPAIGN_PHASE_COUNT - 1) {
+        get().showPhaseBridge()
+      } else {
+        get().showEndScreen(true)
+      }
       return
     }
 
@@ -664,30 +760,54 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!u) return
 
     const col = JSON.parse(JSON.stringify(state.collection)) as DieInstance[]
-    const newPlayerMax = state.playerHpMax + PLAYER_HP_GROWTH_PER_BATTLE
+    const won = state.lastBattleWon
+    const newPlayerMax = won ? state.playerHpMax + PLAYER_HP_GROWTH_PER_BATTLE : state.playerHpMax
+    const nextBattleIndex = won
+      ? Math.min(state.battleIndex + 1, TOTAL_BATTLES - 1)
+      : state.battleIndex
 
     if (u.type === 'upgrade_die') {
       const last = col[col.length - 1]
       const dIdx = DICE_TYPES.indexOf(last.sides as (typeof DICE_TYPES)[number])
       last.sides = DICE_TYPES[dIdx + 1]
     } else if (u.type === 'add_die') {
-      col.push({ sides: 4, count: 1, special: null })
+      col.push({ sides: 4, count: 1, special: [] })
     } else if (u.type === 'add_count') {
       col[col.length - 1].count++
     } else if (u.type === 'add_special' && u.special) {
-      const noSp = col.find((d) => !d.special)
-      if (noSp) noSp.special = u.special
+      const i = pickDieIndexForNewSpecial(col)
+      col[i].special = [...col[i].special, u.special]
+    } else if (u.type === 'replace_special' && u.special) {
+      const target = col.find((d) => d.special.some((s) => s !== u.special))
+      if (target) {
+        const j = target.special.findIndex((s) => s !== u.special)
+        if (j >= 0) {
+          target.special = [
+            ...target.special.slice(0, j),
+            u.special,
+            ...target.special.slice(j + 1),
+          ]
+        }
+      }
     }
 
     set({
       collection: col,
-      battleIndex: state.battleIndex + 1,
+      battleIndex: nextBattleIndex,
       playerHpMax: newPlayerMax,
-      playerHp: newPlayerMax,
+      playerHp: won ? newPlayerMax : Math.min(state.playerHp, newPlayerMax),
       screen: 'battle',
       pendingUpgrades: [],
     })
     get().startBattle()
+  },
+
+  showPhaseBridge: () => {
+    set({
+      screen: 'phase_bridge',
+      battleRunning: false,
+      battlePaused: false,
+    })
   },
 
   showEndScreen: (victory) => {
@@ -700,4 +820,4 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 }))
 
-export { getSpecialById, initCollection }
+export { getSpecialById, startingCollectionForPhase }

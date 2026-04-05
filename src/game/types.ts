@@ -16,11 +16,13 @@ export type SpecialId =
   | 'pulse'
   | 'opening_crit'
   | 'twinned_max'
+  | 'poison'
 
 export interface DieInstance {
   sides: number
   count: number
-  special: SpecialId | null
+  /** Efeitos especiais acumulados neste dado (ordem não importa na rolagem). */
+  special: SpecialId[]
 }
 
 export interface RollResult {
@@ -33,7 +35,8 @@ export interface RollResult {
   healAmount: number
   msg: string | null
   sides: number
-  special: SpecialId | null
+  /** Cópia dos especiais do dado que gerou esta rolagem. */
+  special: SpecialId[]
 }
 
 export interface EnemyTemplate {
@@ -42,7 +45,23 @@ export interface EnemyTemplate {
   dice: DieInstance[]
 }
 
-export type Screen = 'start' | 'battle' | 'upgrade' | 'end'
+/** Feedback visual de dano numa rodada (faces vs bônus de efeitos vs veneno). */
+export type RoundDamagePopup = {
+  base: number
+  bonus: number
+  /** Dano de veneno aplicado no início desta rodada (1 por acúmulo). */
+  poison?: number
+  seq: number
+}
+
+/** Cura na rodada: 1 PV por dado rolado vs cura de efeitos especiais. */
+export type RoundHealPopup = {
+  fromDice: number
+  fromSpecials: number
+  seq: number
+}
+
+export type Screen = 'start' | 'battle' | 'upgrade' | 'phase_bridge' | 'end'
 
 export interface SpecialDef {
   id: SpecialId
@@ -56,6 +75,7 @@ export type UpgradeOptionType =
   | 'add_die'
   | 'add_count'
   | 'add_special'
+  | 'replace_special'
   | 'add_hp'
 
 export interface UpgradeOption {

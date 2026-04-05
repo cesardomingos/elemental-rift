@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef } from 'react'
 import {
+  CAMPAIGN_PHASE_COUNT,
   DICE_TYPES,
-  PLAYER_BASE_HP,
   PLAYER_HP_GROWTH_PER_BATTLE,
   SPECIALS,
   TOTAL_BATTLES,
+  TOTAL_CAMPAIGN_CHAMBERS,
 } from '../game/constants'
 
 type Props = {
@@ -75,10 +76,15 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
                 cadeia <code>{diceChain}</code>). Já no dado máximo: <strong>+1 dado</strong> ao maior tipo.
               </li>
               <li>
-                <strong>2ª e 3ª opções (aleatórias)</strong>: a cada tela podem ser, por exemplo:{' '}
-                <strong>novo 1d4</strong>, <strong>+1 ao maior tipo</strong> (se não for igual à fixa), e/ou
-                um <strong>efeito especial</strong> aleatório da lista abaixo (só se ainda houver dado sem
-                especial).
+                <strong>2ª e 3ª opções (sorteio ponderado)</strong>: tendem a privilegiar{' '}
+                <strong>novo 1d4</strong> e <strong>especiais</strong>; <strong>+1 ao maior tipo</strong> é
+                mais raro para não dominar o fim de jogo. <strong>Sempre</strong> há pelo menos uma carta de
+                adicionar especial entre as duas aleatórias, desde a primeira câmara. Novos especiais
+                priorizam o dado com menos marcas; em empate, o catalisador mais à direita na lista (o mais
+                “principal”) recebe a marca, para você poder <strong>acumular vários efeitos no mesmo
+                dado</strong> (e repetir o mesmo efeito). Com pelo menos um especial na mesa, também podem
+                aparecer cartas de <strong>regravar</strong>: uma marca já ligada a um dado vira outro
+                efeito da lista, sem apagar as demais no mesmo catalisador.
               </li>
             </ul>
           </section>
@@ -86,8 +92,8 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
           <section className="modal-section">
             <h3>Efeitos especiais (dados)</h3>
             <p className="modal-muted">
-              Cada dado leva no máximo um especial. Os inimigos também podem receber estes efeitos pelo
-              “eco na masmorra”.
+              Os inimigos também podem receber estes efeitos pelo “eco na masmorra” (acumulam no mesmo
+              dado).
             </p>
             <ul className="modal-special-grid">
               {SPECIALS.map((s) => (
@@ -108,13 +114,20 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
             <h3>Progressão do alquimista</h3>
             <ul className="modal-list">
               <li>
-                Ao avançar para a próxima câmara (depois de escolher o upgrade):{' '}
-                <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> e vida cheia (base:{' '}
-                {PLAYER_BASE_HP}).
+                Ao <strong>vencer</strong> uma câmara e escolher o upgrade:{' '}
+                <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> e vida cheia. Se você{' '}
+                <strong>perder</strong> a câmara, ainda escolhe um upgrade, mas{' '}
+                <strong>não</strong> ganha esse bônus de PV e repete a mesma câmara.
               </li>
               <li>
-                Objetivo da run: vencer <strong>{TOTAL_BATTLES} câmaras</strong> sem perder todas as
-                vidas.
+                A trilha tem <strong>{CAMPAIGN_PHASE_COUNT} fases</strong> de{' '}
+                <strong>{TOTAL_BATTLES} câmaras</strong> ({TOTAL_CAMPAIGN_CHAMBERS} no total). Entre uma
+                fase e outra seus catalisadores voltam ao essencial (dado inicial mais forte a cada fase),
+                mas você mantém <strong>PV máximo e atual</strong> e as <strong>vidas</strong> já
+                gastas ou não.
+              </li>
+              <li>
+                Objetivo: vencer as {CAMPAIGN_PHASE_COUNT} fases sem perder todas as vidas (começo: 3).
               </li>
             </ul>
           </section>

@@ -1,12 +1,45 @@
-import type { EnemyTemplate, SpecialDef } from './types'
+import type { DieInstance, EnemyTemplate, SpecialDef } from './types'
 
 export const DICE_TYPES = [4, 6, 8, 10, 12, 20] as const
 
 /** Trilha do menu (arquivo em `public/musics/`). */
 export const MENU_MUSIC_URL = '/musics/amok4.mp3.mpeg'
 
-/** Número de batalhas para vencer a run (sem perder todas as vidas). */
+/** Número de batalhas por fase da trilha (sem perder todas as vidas). */
 export const TOTAL_BATTLES = 10
+
+/** Trilha completa: 3 fases de 10 vitórias, dificuldade e dado inicial crescentes. */
+export const CAMPAIGN_PHASE_COUNT = 3
+
+/** Nome, ícone e classe CSS de fundo por fase (batalha / upgrade / fronteira). */
+export const CAMPAIGN_PHASES = [
+  {
+    label: 'Penumbra',
+    icon: '🌘',
+    bgClass: 'campaign-phase-0',
+  },
+  {
+    label: 'Vértice',
+    icon: '⚡',
+    bgClass: 'campaign-phase-1',
+  },
+  {
+    label: 'Núcleo',
+    icon: '💠',
+    bgClass: 'campaign-phase-2',
+  },
+] as const
+
+export function getCampaignPhaseTheme(phaseIndex: number) {
+  const i = Math.min(
+    Math.max(0, phaseIndex),
+    CAMPAIGN_PHASES.length - 1,
+  )
+  return CAMPAIGN_PHASES[i]
+}
+
+/** Total de câmaras para vencer a campanha (todas as fases). */
+export const TOTAL_CAMPAIGN_CHAMBERS = TOTAL_BATTLES * CAMPAIGN_PHASE_COUNT
 
 /** Vida inicial do alquimista e quanto o limite sobe após cada batalha (estudo no abismo). */
 export const PLAYER_BASE_HP = 20
@@ -29,14 +62,31 @@ const DUNGEON_ENEMIES: { name: string; hp: number }[] = [
   { name: 'Senhor do Círculo', hp: 64 },
 ]
 
-/** Cria a fila de inimigos da run (uma entrada por batalha). */
-export function createRunEnemies(): EnemyTemplate[] {
+/**
+ * Coleção inicial do jogador na fase `phaseIndex` (0 = 1d4, 1 = 1d6, 2 = 1d8, …).
+ */
+export function startingCollectionForPhase(phaseIndex: number): DieInstance[] {
+  const idx = Math.min(
+    Math.max(0, phaseIndex),
+    DICE_TYPES.length - 1,
+  )
+  return [{ sides: DICE_TYPES[idx], count: 1, special: [] }]
+}
+
+/**
+ * Fila de inimigos da fase. Fases posteriores: mais PV e dados em patamares mais altos.
+ */
+export function createRunEnemies(phaseIndex = 0): EnemyTemplate[] {
+  const p = Math.max(0, phaseIndex)
+  const hpMult = 1 + p * 0.24
+  const diceOffset = p
   return DUNGEON_ENEMIES.map((row, i) => {
-    const sides = DICE_TYPES[Math.min(i, DICE_TYPES.length - 1)]
+    const tierIdx = Math.min(i + diceOffset, DICE_TYPES.length - 1)
+    const sides = DICE_TYPES[tierIdx]
     return {
       name: row.name,
-      hp: row.hp,
-      dice: [{ sides, count: 1, special: null }],
+      hp: Math.max(1, Math.round(row.hp * hpMult)),
+      dice: [{ sides, count: 1, special: [] }],
     }
   })
 }
@@ -141,8 +191,14 @@ export const SPECIALS: SpecialDef[] = [
   {
     id: 'twinned_max',
     label: 'Face gêmea',
-    desc: 'O maior valor do dado conta duas vezes na mesa (o máximo tem o dobro da chance)',
+    desc: 'Remove a face mais baixa do dado e duplica a mais alta na mesa de rolagem. Cada cópia extra remove mais uma face baixa e soma outra face máxima',
     icon: '👥',
+  },
+  {
+    id: 'poison',
+    label: 'Veneno da fenda',
+    desc: 'Rolar 6 aplica um acúmulo: no início de cada rodada seguinte, o oponente perde 1 PV por acúmulo (até o fim do combate)',
+    icon: '☠️',
   },
 ]
 
