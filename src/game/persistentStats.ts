@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase'
+
 const STORAGE_KEY = 'elemental-rift-persistent-v1'
 
 export type PersistentSnapshot = {
@@ -69,6 +71,90 @@ function save() {
   } catch {
     /* ignore quota */
   }
+  scheduleSyncToCloud()
+}
+
+// ── Cloud sync (Supabase profiles.persistent_stats) ────────────
+
+function mergeSnapshots(a: PersistentSnapshot, b: PersistentSnapshot): PersistentSnapshot {
+  return {
+    v: 1,
+    unlockedIds: [...new Set([...a.unlockedIds, ...b.unlockedIds])],
+    lifetimeDamageDealt: Math.max(a.lifetimeDamageDealt, b.lifetimeDamageDealt),
+    bestSingleBattleDamage: Math.max(a.bestSingleBattleDamage, b.bestSingleBattleDamage),
+    lifetimeBattlesWon: Math.max(a.lifetimeBattlesWon, b.lifetimeBattlesWon),
+    playerNat1Total: Math.max(a.playerNat1Total, b.playerNat1Total),
+    bestConsecutiveOnes: Math.max(a.bestConsecutiveOnes, b.bestConsecutiveOnes),
+    flawlessBattleWins: Math.max(a.flawlessBattleWins, b.flawlessBattleWins),
+    natural20OnD20: Math.max(a.natural20OnD20, b.natural20OnD20),
+    upgradesChosenTotal: Math.max(a.upgradesChosenTotal, b.upgradesChosenTotal),
+    campaignsCompleted: Math.max(a.campaignsCompleted, b.campaignsCompleted),
+    bestChamberCleared: Math.max(a.bestChamberCleared, b.bestChamberCleared),
+    clutchWins: Math.max(a.clutchWins, b.clutchWins),
+    bestSingleRoundDamage: Math.max(a.bestSingleRoundDamage, b.bestSingleRoundDamage),
+    bestPoisonStacksGainedBattle: Math.max(a.bestPoisonStacksGainedBattle, b.bestPoisonStacksGainedBattle),
+  }
+}
+
+function parseRemote(raw: unknown): PersistentSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null
+  const p = raw as Partial<PersistentSnapshot>
+  if (!Array.isArray(p.unlockedIds)) return null
+  const d = defaultSnapshot()
+  return { ...d, ...p, v: 1, unlockedIds: [...p.unlockedIds] }
+}
+
+let syncTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleSyncToCloud() {
+  if (!supabase) return
+  if (syncTimer) clearTimeout(syncTimer)
+  syncTimer = setTimeout(() => {
+    syncTimer = null
+    pushToCloud().catch(() => {})
+  }, 2_000)
+}
+
+async function pushToCloud(): Promise<void> {
+  if (!supabase) return
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return
+  const stats = loadPersistentStats()
+  await supabase
+    .from('profiles')
+    .update({ persistent_stats: stats as unknown as Record<string, unknown> })
+    .eq('id', session.user.id)
+}
+
+/**
+ * Fetch remote stats, merge with local (max of each field, union of unlocks),
+ * write the merged result to both localStorage and cloud.
+ * Call this once after the user logs in.
+ */
+export async function syncFromCloud(): Promise<void> {
+  if (!supabase) return
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return
+  const { data } = await supabase
+    .from('profiles')
+    .select('persistent_stats')
+    .eq('id', session.user.id)
+    .single()
+  const remote = parseRemote(data?.persistent_stats)
+  if (!remote) {
+    await pushToCloud()
+    return
+  }
+  const local = loadPersistentStats()
+  const merged = mergeSnapshots(local, remote)
+  cache = merged
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
+  } catch { /* quota */ }
+  await supabase
+    .from('profiles')
+    .update({ persistent_stats: merged as unknown as Record<string, unknown> })
+    .eq('id', session.user.id)
 }
 
 export function getPersistentSnapshot(): PersistentSnapshot {

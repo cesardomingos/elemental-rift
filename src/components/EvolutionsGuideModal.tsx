@@ -72,23 +72,23 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
           </p>
 
           <section className="modal-section">
-            <h3>🎲 Seus dados (catalisadores)</h3>
+            <h3>🎲 Seus dados</h3>
             <ul className="modal-list">
               <li>
-                <strong>1ª opção (fixa)</strong>: enquanto <strong>algum</strong> catalisador ainda não for o
-                dado de {DICE_TYPES[DICE_TYPES.length - 1]} faces, <strong>evoluir faces</strong> sobe{' '}
+                <strong>1ª opção (fixa)</strong>: enquanto <strong>algum</strong> dado ainda não for o de{' '}
+                {DICE_TYPES[DICE_TYPES.length - 1]} faces, <strong>evoluir faces</strong> sobe{' '}
                 <strong>um passo na cadeia</strong> em <strong>cada dado</strong> que ainda puder (
                 <code>{diceChain}</code>). Quando <strong>todos</strong> já estiverem no topo da cadeia:{' '}
-                <strong>+1 cópia</strong> em <strong>cada</strong> catalisador (mais uma rolagem por dado por
-                rodada).
+                <strong>+1 cópia</strong> em <strong>um dos dados com mais faces</strong> (em empate, vale o
+                mais à direita na lista — mais uma rolagem só nesse dado por rodada).
               </li>
               <li>
                 <strong>2ª e 3ª opções (sorteio ponderado)</strong>: tendem a privilegiar{' '}
                 <strong>novo 🎲 dado de 4 faces (1d4)</strong> e <strong>especiais</strong>;{' '}
-                <strong>+1 cópia em cada dado</strong> é mais raro para não dominar o fim de jogo.{' '}
+                <strong>+1 cópia no dado mais alto</strong> é mais raro para não dominar o fim de jogo.{' '}
                 <strong>Sempre</strong> há pelo menos uma carta de adicionar especial entre as duas
                 aleatórias, desde a primeira câmara. Cada especial escolhido grava a marca em{' '}
-                <strong>todos</strong> os catalisadores da mesa. Você pode{' '}
+                <strong>todos</strong> os dados da mesa. Você pode{' '}
                 <strong>acumular quantas melhorias quiser</strong> — inclusive <strong>repetir o mesmo efeito</strong>;
                 nada é trocado ou apagado ao escolher um novo especial.
               </li>
@@ -131,7 +131,7 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
                 A trilha tem <strong>{CAMPAIGN_PHASE_COUNT} fases</strong> de{' '}
                 <strong>{TOTAL_BATTLES} câmaras</strong> ({TOTAL_CAMPAIGN_CHAMBERS} no total). Na{' '}
                 <strong>fronteira</strong> entre fases você recebe o dado inicial maior da próxima etapa e
-                escolhe <strong>um catalisador</strong> da mesa para carregar; o restante não atravessa.
+                escolhe <strong>um dado</strong> da mesa para carregar; o restante não atravessa.
                 Você mantém <strong>PV máximo e atual</strong> e as <strong>vidas</strong>.
               </li>
               <li>

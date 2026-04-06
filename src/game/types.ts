@@ -30,7 +30,7 @@ export interface RollResult {
   bonus: number
   /** Dano extra de efeitos que exigem face máxima (dobro, explosão, vidro). */
   bonusCrit: number
-  /** Dano extra dos demais catalisadores na rolagem. */
+  /** Dano extra dos demais efeitos dos dados na rolagem. */
   bonusSpecial: number
   total: number
   isCrit: boolean

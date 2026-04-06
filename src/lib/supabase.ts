@@ -8,7 +8,15 @@ const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
 export const supabase: SupabaseClient | null =
   url && key ? createClient(url, key) : null
 
-// ── localStorage fallback ──────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────
+
+export type AuthUser = {
+  id: string
+  email: string
+  displayName: string
+}
+
+// ── localStorage fallback (offline / no env vars) ──────────────
 
 const LOCAL_RUNS_KEY = 'elemental-rift-runs-v1'
 const LOCAL_USER_KEY = 'elemental-rift-local-uid'
@@ -44,21 +52,81 @@ function saveLocalRuns(runs: RunRow[]) {
   }
 }
 
-// ── Public API (Supabase when available, localStorage otherwise) ──
+// ── Auth ───────────────────────────────────────────────────────
 
-export async function ensureSession(): Promise<string | null> {
-  if (!supabase) return localUserId()
+function userFromSession(session: {
+  user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }
+}): AuthUser {
+  return {
+    id: session.user.id,
+    email: session.user.email ?? '',
+    displayName: (session.user.user_metadata?.display_name as string) ?? 'Alquimista',
+  }
+}
+
+export async function getAuthUser(): Promise<AuthUser | null> {
+  if (!supabase) return null
   const {
     data: { session },
   } = await supabase.auth.getSession()
-  if (session) return session.user.id
-  const { data, error } = await supabase.auth.signInAnonymously()
-  if (error) {
-    console.error('Auth error:', error)
-    return null
-  }
-  return data.session?.user.id ?? null
+  if (!session) return null
+  return userFromSession(session)
 }
+
+export async function signUp(
+  email: string,
+  password: string,
+  displayName: string,
+): Promise<{ user: AuthUser | null; error: string | null; needsConfirmation: boolean }> {
+  if (!supabase)
+    return { user: null, error: 'Supabase não configurado.', needsConfirmation: false }
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { display_name: displayName } },
+  })
+  if (error) return { user: null, error: error.message, needsConfirmation: false }
+  if (!data.session)
+    return { user: null, error: null, needsConfirmation: true }
+  return {
+    user: {
+      id: data.user!.id,
+      email: data.user!.email ?? '',
+      displayName,
+    },
+    error: null,
+    needsConfirmation: false,
+  }
+}
+
+export async function signIn(
+  email: string,
+  password: string,
+): Promise<{ user: AuthUser | null; error: string | null }> {
+  if (!supabase) return { user: null, error: 'Supabase não configurado.' }
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  if (error) return { user: null, error: error.message }
+  return { user: userFromSession(data), error: null }
+}
+
+export async function signOut(): Promise<void> {
+  if (!supabase) return
+  await supabase.auth.signOut()
+}
+
+export function onAuthChange(
+  callback: (user: AuthUser | null) => void,
+): () => void {
+  if (!supabase) return () => {}
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((_event, session) => {
+    callback(session ? userFromSession(session) : null)
+  })
+  return () => subscription.unsubscribe()
+}
+
+// ── Data ───────────────────────────────────────────────────────
 
 export async function submitRun(input: {
   playerName: string
@@ -96,10 +164,13 @@ export async function submitRun(input: {
     return true
   }
 
-  const userId = await ensureSession()
-  if (!userId) return false
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  if (!session) return false
+
   const { error } = await supabase.from('runs').insert({
-    user_id: userId,
+    user_id: session.user.id,
     player_name: input.playerName,
     game_version: input.gameVersion,
     score: input.score,

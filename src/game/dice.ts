@@ -215,7 +215,7 @@ export function totalRoll(rolls: RollResult[]) {
   return rolls.reduce((s, r) => s + r.total, 0)
 }
 
-/** Soma das faces vs bônus de crítico (face máxima) vs demais catalisadores. */
+/** Soma das faces vs bônus de crítico (face máxima) vs demais efeitos nos dados. */
 export function splitDamageFromRolls(rolls: RollResult[]): {
   base: number
   bonusCrit: number

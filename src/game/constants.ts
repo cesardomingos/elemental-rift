@@ -129,7 +129,7 @@ function cloneDieInstance(d: DieInstance): DieInstance {
 }
 
 /**
- * Dado inicial da nova fase + uma cópia de um catalisador escolhido ao cruzar a fronteira.
+ * Dado inicial da nova fase + uma cópia de um dado escolhido ao cruzar a fronteira.
  */
 export function mergePhaseStarterWithCarriedDie(
   phaseIndex: number,
@@ -196,6 +196,18 @@ function buildEnemyDiceForChamber(
   ]
 }
 
+/**
+ * PV extra a partir da 5.ª câmara da fase (índice 4), apenas nas fases 2 e 3 da campanha
+ * (`phaseIndex` 1 e 2). Cresce a cada câmara (5.ª → … → 10.ª). Fase 3: +24 PV por passo.
+ */
+function progressiveLateChamberHpBonus(phaseIndex: number, chamberIndex: number): number {
+  if (phaseIndex < 1 || phaseIndex > 2) return 0
+  if (chamberIndex < 4) return 0
+  const step = chamberIndex - 3
+  const hpPerStep = phaseIndex === 1 ? 5 : 24
+  return step * hpPerStep
+}
+
 export function createRunEnemies(phaseIndex = 0): EnemyTemplate[] {
   const p = Math.max(0, phaseIndex)
   const hpMult = 1 + p * 0.24
@@ -203,9 +215,10 @@ export function createRunEnemies(phaseIndex = 0): EnemyTemplate[] {
   return DUNGEON_ENEMIES.map((row, i) => {
     const tierIdx = Math.min(i + diceOffset, DICE_TYPES.length - 1)
     const sides = DICE_TYPES[tierIdx]!
+    const bonusHp = progressiveLateChamberHpBonus(p, i)
     return {
       name: row.name,
-      hp: Math.max(1, Math.round(row.hp * hpMult)),
+      hp: Math.max(1, Math.round(row.hp * hpMult) + bonusHp),
       dice: buildEnemyDiceForChamber(p, i, tierIdx, sides),
     }
   })

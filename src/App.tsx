@@ -4,6 +4,7 @@ import { useMenuMusic } from './hooks/useMenuMusic'
 import { AchievementsModal } from './components/AchievementsModal'
 import { EvolutionsGuideModal } from './components/EvolutionsGuideModal'
 import { LeaderboardModal } from './components/LeaderboardModal'
+import { AuthModal } from './components/AuthModal'
 import { PlayerAvatar } from './components/PlayerAvatar'
 import { EnemyAvatar } from './components/EnemyAvatar'
 import {
@@ -35,7 +36,8 @@ import type {
   RunStats,
 } from './game/types'
 import { computeScore, GAME_VERSION, type BuildSnapshot } from './game/runSubmission'
-import { submitRun } from './lib/supabase'
+import { submitRun, getAuthUser, onAuthChange, signOut, supabase } from './lib/supabase'
+import { syncFromCloud } from './game/persistentStats'
 
 /** Posição pseudoaleatória estável por rodada/chave (evita “pilha” vertical). */
 function scatterOffset(seq: number, chipKey: string): { x: number; y: number } {
@@ -208,7 +210,7 @@ function RoundDamagePopups({
             style={nextDelay()}
             title={
               variant === 'dealt'
-                ? 'Dano extra de catalisadores que disparam na face máxima do dado'
+                ? 'Dano extra dos seus dados quando a face máxima dispara o efeito'
                 : 'Dano extra do inimigo ao tirar a face máxima'
             }
           >
@@ -224,7 +226,7 @@ function RoundDamagePopups({
             style={nextDelay()}
             title={
               variant === 'dealt'
-                ? 'Dano extra de outros catalisadores nesta rolagem'
+                ? 'Dano extra de outros efeitos dos seus dados nesta rolagem'
                 : 'Dano extra de outros efeitos do inimigo nesta rolagem'
             }
           >
@@ -270,8 +272,8 @@ function RoundHealPopups({
       : 'Cura do inimigo ao rolar cada dado (1 PV por dado)'
   const specTitle =
     who === 'player'
-      ? 'Cura dos seus catalisadores nesta rolagem'
-      : 'Cura dos catalisadores do inimigo nesta rolagem'
+      ? 'Cura dos seus dados nesta rolagem'
+      : 'Cura dos dados do inimigo nesta rolagem'
   let delayIdx = 0
   const nextDelay = () => ({ animationDelay: `${(delayIdx++ * 0.07).toFixed(2)}s` })
   return (
@@ -439,14 +441,22 @@ function StartScreen() {
   const collection = useGameStore((s) => s.collection)
   const startCampaign = useGameStore((s) => s.startCampaign)
   const startCampaignFromBuild = useGameStore((s) => s.startCampaignFromBuild)
+  const authUser = useGameStore((s) => s.authUser)
+  const setAuthUser = useGameStore((s) => s.setAuthUser)
   const [guideOpen, setGuideOpen] = useState(false)
   const [achievementsOpen, setAchievementsOpen] = useState(false)
   const [leaderboardOpen, setLeaderboardOpen] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
 
   const handleLoadBuild = useCallback(
     (snapshot: BuildSnapshot) => startCampaignFromBuild(snapshot),
     [startCampaignFromBuild],
   )
+
+  const handleSignOut = async () => {
+    await signOut()
+    setAuthUser(null)
+  }
 
   return (
     <div className="app-screen active">
@@ -456,6 +466,11 @@ function StartScreen() {
         open={leaderboardOpen}
         onClose={() => setLeaderboardOpen(false)}
         onLoadBuild={handleLoadBuild}
+      />
+      <AuthModal
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        onAuth={(user) => setAuthUser(user)}
       />
       <div className="card" style={{ textAlign: 'center', padding: '2rem 1.5rem' }}>
         <h1 className="start-screen-logo-heading">
@@ -476,7 +491,7 @@ function StartScreen() {
           perigosas tomam forma. A trilha tem <strong>{CAMPAIGN_PHASE_COUNT} fases</strong> de{' '}
           <strong>{TOTAL_BATTLES} câmaras</strong> cada. Ao cruzar a fronteira você mantém{' '}
           <strong>PV máximo, PV atual e vidas</strong>, recebe o <strong>🎲 dado inicial maior</strong> da
-          próxima fase e escolhe <strong>um catalisador</strong> da mesa para levar; o restante fica para
+          próxima fase e escolhe <strong>um dado</strong> da mesa para levar; o restante fica para
           trás (
           {diceFriendlyOneDieOf(4)} → {diceFriendlyOneDieOf(6)} → {diceFriendlyOneDieOf(8)} como base por
           fase) e os inimigos ficam mais duros.
@@ -536,10 +551,27 @@ function StartScreen() {
           >
             📊 Ranking
           </button>
+          {authUser ? (
+            <button
+              type="button"
+              onClick={handleSignOut}
+              style={{ padding: '10px 20px', fontSize: 14 }}
+            >
+              Sair ({authUser.displayName})
+            </button>
+          ) : supabase ? (
+            <button
+              type="button"
+              onClick={() => setAuthOpen(true)}
+              style={{ padding: '10px 20px', fontSize: 14 }}
+            >
+              Entrar / Criar conta
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="card">
-        <h3 style={{ marginBottom: 8 }}>Seus catalisadores (🎲 dados na mesa)</h3>
+        <h3 style={{ marginBottom: 8 }}>Seus dados na mesa</h3>
         <CollectionGrid dice={collection} />
       </div>
       <div className="card">
@@ -547,7 +579,7 @@ function StartScreen() {
         <p>
           Os duelos se resolvem sozinhos, rodada a rodada. Em cada fase você desce {TOTAL_BATTLES}{' '}
           câmaras; ao limpar a décima, a trilha avança. Na fronteira você escolhe{' '}
-          <strong>1 catalisador</strong> para manter além do 🎲 dado novo da fase. Você pode gravar{' '}
+          <strong>1 dado</strong> para manter além do 🎲 dado novo da fase. Você pode gravar{' '}
           <strong>efeitos especiais</strong>{' '}
           nos dados. Cada <strong>dado</strong> que aparece na tela (🎲) devolve 1 PV a quem o lançou (até o
           máximo). Ao{' '}
@@ -555,7 +587,8 @@ function StartScreen() {
           <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> (início: {PLAYER_BASE_HP}). A cada{' '}
           <strong>5 câmaras vencidas</strong> na campanha (5.ª, 10.ª, 15.ª…) você ganha automaticamente um{' '}
           <strong>1d4</strong> extra na mesa. As cartas do grimório aplicam o efeito a{' '}
-          <strong>todos os seus dados</strong> (evolução de faces, +1 rolagem por dado e marcas de especial).
+          <strong>todos os seus dados</strong> nas cartas de evoluir faces e de especial; a carta de mais
+          rolagens adiciona <strong>+1 cópia só em um dos dados mais altos</strong> (mais faces).
           Você tem 3 vidas para toda a campanha.
         </p>
       </div>
@@ -747,6 +780,9 @@ function PostBattleScreen() {
   const phaseTheme = getCampaignPhaseTheme(campaignPhase)
   const phaseComplete = lastBattleWon && battleIndex === TOTAL_BATTLES - 1
   const campaignComplete = phaseComplete && campaignPhase === CAMPAIGN_PHASE_COUNT - 1
+  const globalChamberWon = campaignPhase * TOTAL_BATTLES + (battleIndex + 1)
+  const milestoneD4Pending =
+    lastBattleWon && globalChamberWon % 5 === 0
 
   let nextHint: string
   if (!lastBattleWon) {
@@ -754,7 +790,7 @@ function PostBattleScreen() {
   } else if (campaignComplete) {
     nextHint = 'Em seguida: o desfecho da sua trilha na Fenda.'
   } else if (phaseComplete) {
-    nextHint = 'Em seguida: fronteira da fase — escolha um catalisador para carregar.'
+    nextHint = 'Em seguida: fronteira da fase — escolha um dado para carregar.'
   } else {
     nextHint = 'Em seguida: escolha um aprimoramento no grimório.'
   }
@@ -799,6 +835,12 @@ function PostBattleScreen() {
             <strong>{lives}</strong> {lives === 1 ? 'vida' : 'vidas'}.
           </p>
         )}
+        {milestoneD4Pending ? (
+          <p className="post-battle-milestone" role="status">
+            Marco a cada 5 câmaras na campanha: ao continuar, você recebe{' '}
+            <strong>+1 dado de 4 faces (1d4)</strong> na mesa.
+          </p>
+        ) : null}
         <p className="post-battle-next-hint">{nextHint}</p>
         <button
           type="button"
@@ -816,6 +858,7 @@ function UpgradeScreen() {
   const campaignPhase = useGameStore((s) => s.campaignPhase)
   const lastBattleWon = useGameStore((s) => s.lastBattleWon)
   const lives = useGameStore((s) => s.lives)
+  const milestoneD4Message = useGameStore((s) => s.milestoneD4Message)
   const pendingUpgrades = useGameStore((s) => s.pendingUpgrades)
   const enemyUpgradePreview = useGameStore((s) => s.enemyUpgradePreview)
   const applyUpgrade = useGameStore((s) => s.applyUpgrade)
@@ -850,6 +893,11 @@ function UpgradeScreen() {
             ? 'Anote um novo traço no grimório: a escolha de aprimoramento abre em destaque.'
             : `${lives} tentativa(s) restante(s). A Fenda não perdoa; adapte sua mesa mesmo assim.`}
         </p>
+        {milestoneD4Message ? (
+          <p className="milestone-d4-banner" role="status">
+            {milestoneD4Message}
+          </p>
+        ) : null}
       </div>
 
       <div className="upgrade-choice-modal-backdrop" role="presentation">
@@ -918,6 +966,7 @@ function UpgradeScreen() {
 function PhaseBridgeScreen() {
   const campaignPhase = useGameStore((s) => s.campaignPhase)
   const beginNextCampaignPhase = useGameStore((s) => s.beginNextCampaignPhase)
+  const milestoneD4Message = useGameStore((s) => s.milestoneD4Message)
   const collection = useGameStore((s) => s.collection)
   const playerHp = useGameStore((s) => s.playerHp)
   const playerHpMax = useGameStore((s) => s.playerHpMax)
@@ -949,14 +998,19 @@ function PhaseBridgeScreen() {
           foi selada ({TOTAL_BATTLES} câmaras). Na próxima etapa você recebe{' '}
           <strong>{diceFriendlyOneDieOf(nextDie)}</strong>{' '}
           <span style={{ fontSize: 12, opacity: 0.9 }}>(notação {diceNotationOne(nextDie)})</span> e leva{' '}
-          <strong>mais um catalisador</strong> à sua escolha da mesa abaixo. O que permanece do corpo:{' '}
+          <strong>mais um dado</strong> à sua escolha da mesa abaixo. O que permanece do corpo:{' '}
           <strong>
             {playerHp} / {playerHpMax} PV
           </strong>{' '}
           e <strong>{lives}</strong> vida(s).
         </p>
+        {milestoneD4Message ? (
+          <p className="milestone-d4-banner" role="status">
+            {milestoneD4Message}
+          </p>
+        ) : null}
 
-        <div className="phase-bridge-carry" role="group" aria-label="Escolha um catalisador para carregar">
+        <div className="phase-bridge-carry" role="group" aria-label="Escolha um dado para carregar">
           <h3 className="phase-bridge-carry-title">Levar para a próxima fase</h3>
           <p className="phase-bridge-carry-hint">
             Toque em um dado para selecionar. Os outros não atravessam a fronteira.
@@ -1024,6 +1078,8 @@ function PhaseBridgeScreen() {
 }
 
 function PublishRunCard() {
+  const authUser = useGameStore((s) => s.authUser)
+  const setAuthUser = useGameStore((s) => s.setAuthUser)
   const playerName = useGameStore((s) => s.playerName)
   const setPlayerName = useGameStore((s) => s.setPlayerName)
   const endVictory = useGameStore((s) => s.endVictory)
@@ -1032,8 +1088,11 @@ function PublishRunCard() {
   const campaignPhase = useGameStore((s) => s.campaignPhase)
   const playerHpMax = useGameStore((s) => s.playerHpMax)
 
+  const [authOpen, setAuthOpen] = useState(false)
   const [status, setStatus] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle')
 
+  const isOnline = !!supabase
+  const loggedIn = !!authUser
   const score = computeScore(runStats)
 
   const handlePublish = async () => {
@@ -1057,12 +1116,33 @@ function PublishRunCard() {
 
   return (
     <div className="card publish-run-card">
+      <AuthModal
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        onAuth={(user) => setAuthUser(user)}
+      />
+
       <h3 style={{ marginBottom: 8 }}>📊 Publicar no ranking</h3>
       <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
         Score desta run: <strong>{score.toLocaleString()}</strong>
       </p>
+
       {status === 'done' ? (
         <p className="publish-run-success">Run publicada com sucesso!</p>
+      ) : isOnline && !loggedIn ? (
+        <>
+          <p style={{ fontSize: 13, marginBottom: 10 }}>
+            Crie uma conta ou entre para salvar sua run no ranking global.
+          </p>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{ padding: '8px 24px', fontSize: 13 }}
+            onClick={() => setAuthOpen(true)}
+          >
+            Criar conta / Entrar
+          </button>
+        </>
       ) : (
         <>
           <div className="publish-run-row">
@@ -1087,7 +1167,7 @@ function PublishRunCard() {
           </div>
           {status === 'error' && (
             <p className="publish-run-error">
-              Não foi possível publicar. Verifique as variáveis de ambiente do Supabase.
+              Não foi possível publicar.
             </p>
           )}
         </>
@@ -1098,6 +1178,7 @@ function PublishRunCard() {
 
 function EndScreen() {
   const endVictory = useGameStore((s) => s.endVictory)
+  const milestoneD4Message = useGameStore((s) => s.milestoneD4Message)
   const collection = useGameStore((s) => s.collection)
   const goToStart = useGameStore((s) => s.goToStart)
   const startCampaign = useGameStore((s) => s.startCampaign)
@@ -1137,6 +1218,11 @@ function EndScreen() {
               história de sobrevivência.
             </p>
             <p className="end-screen-sub">Obrigado por jogar. Até a próxima descida.</p>
+            {milestoneD4Message ? (
+              <p className="milestone-d4-banner end-screen-milestone" role="status">
+                {milestoneD4Message}
+              </p>
+            ) : null}
           </>
         ) : (
           <>
@@ -1164,7 +1250,7 @@ function EndScreen() {
       <PublishRunCard />
 
       <div className="card">
-        <h3 style={{ marginBottom: 8 }}>🎲 Catalisadores ao fim da run</h3>
+        <h3 style={{ marginBottom: 8 }}>🎲 Seus dados ao fim da run</h3>
         <CollectionGrid dice={collection} />
       </div>
       <div
@@ -1201,7 +1287,21 @@ function EndScreen() {
 
 export default function App() {
   const screen = useGameStore((s) => s.screen)
+  const setAuthUser = useGameStore((s) => s.setAuthUser)
   useMenuMusic(screen === 'start')
+
+  useEffect(() => {
+    getAuthUser().then((u) => {
+      if (u) {
+        setAuthUser(u)
+        syncFromCloud().catch(() => {})
+      }
+    })
+    return onAuthChange((u) => {
+      setAuthUser(u)
+      if (u) syncFromCloud().catch(() => {})
+    })
+  }, [setAuthUser])
 
   return (
     <>

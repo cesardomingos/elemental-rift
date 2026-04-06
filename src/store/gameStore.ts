@@ -44,6 +44,7 @@ import {
   recordUpgradeChosen,
 } from '../game/persistentStats'
 import type { BuildSnapshot } from '../game/runSubmission'
+import type { AuthUser } from '../lib/supabase'
 
 const PLAYER_NAME_KEY = 'elemental-rift-player-name'
 
@@ -128,6 +129,25 @@ function pickEnemyDieIndexForSpecial(dice: DieInstance[]): number {
   return dice.length - 1
 }
 
+/** Índice de um dado entre os de maior tier (mais faces); em empate, o mais à direita na mesa. */
+function pickIndexOfOneHighestTierDie(col: DieInstance[]): number {
+  if (col.length === 0) return 0
+  let bestTier = -1
+  let bestIndex = col.length - 1
+  for (let i = 0; i < col.length; i++) {
+    const di = DICE_TYPES.indexOf(col[i].sides as (typeof DICE_TYPES)[number])
+    if (di < 0) continue
+    if (di > bestTier) {
+      bestTier = di
+      bestIndex = i
+    } else if (di === bestTier) {
+      bestIndex = i
+    }
+  }
+  if (bestTier < 0) return col.length - 1
+  return bestIndex
+}
+
 function enemyAnyDieCanUpgrade(enemy: EnemyTemplate): boolean {
   return enemy.dice.some((d) => {
     const di = DICE_TYPES.indexOf(d.sides as (typeof DICE_TYPES)[number])
@@ -181,8 +201,8 @@ function buildWeightedRandomPool(fixed: UpgradeOption): WeightedUpgrade[] {
   const addCount: UpgradeOption = {
     type: 'add_count',
     icon: '➕',
-    label: 'Mais uma rolagem (cada dado)',
-    desc: '🎲 +1 cópia em cada catalisador da mesa: cada um rola mais uma vez por rodada.',
+    label: 'Mais uma rolagem (dado mais alto)',
+    desc: '🎲 +1 cópia em um dos seus dados com mais faces (em empate, vale o mais à direita na mesa).',
   }
 
   out.push({ opt: addDie, w: 2.4 })
@@ -251,10 +271,19 @@ function maybeGrantMilestoneD4(
   won: boolean,
   campaignPhase: number,
   battleIndex: number,
-) {
-  if (!won) return
-  if (globalChamberNumber(campaignPhase, battleIndex) % 5 !== 0) return
+): boolean {
+  if (!won) return false
+  if (globalChamberNumber(campaignPhase, battleIndex) % 5 !== 0) return false
   collection.push({ sides: 4, count: 1, special: [] })
+  return true
+}
+
+function milestoneD4FeedbackText(
+  campaignPhase: number,
+  battleIndexJustWon: number,
+): string {
+  const n = globalChamberNumber(campaignPhase, battleIndexJustWon)
+  return `Bônus a cada 5 câmaras: você recebeu +1 dado de 4 faces (1d4) ao vencer a ${n}.ª câmara da campanha.`
 }
 
 function collectionHasDieBelowMaxSides(collection: DieInstance[]): boolean {
@@ -273,13 +302,13 @@ function generateUpgrades(collection: DieInstance[]): UpgradeOption[] {
         type: 'upgrade_die',
         icon: '🎲',
         label: 'Evoluir faces (todos os dados)',
-        desc: `🎲 Cada catalisador que ainda não for o dado de ${DICE_TYPES[DICE_TYPES.length - 1]} faces sobe um passo na cadeia (${DICE_TYPES.join(' → ')}).`,
+        desc: `🎲 Cada dado que ainda não for o de ${DICE_TYPES[DICE_TYPES.length - 1]} faces sobe um passo na cadeia (${DICE_TYPES.join(' → ')}).`,
       }
     : {
         type: 'add_count',
         icon: '➕',
-        label: 'Mais uma rolagem (todos)',
-        desc: '🎲 +1 cópia em cada catalisador na mesa (mais uma rolagem por dado por rodada).',
+        label: 'Mais uma rolagem (dado mais alto)',
+        desc: '🎲 +1 cópia em um dos seus dados com mais faces (em empate, vale o mais à direita na mesa).',
       }
 
   const picked = pickTwoWeightedUpgrades(fixed)
@@ -409,6 +438,10 @@ interface GameState {
   sessionPlayerOneStreak: number
   sessionMaxRoundDamage: number
   sessionPoisonStacksGained: number
+  /** Aviso de +1d4 por marco (5.ª, 10.ª câmara…); limpo ao iniciar batalha. */
+  milestoneD4Message: string | null
+  authUser: AuthUser | null
+  setAuthUser: (user: AuthUser | null) => void
   playerName: string
   setPlayerName: (name: string) => void
   startCampaign: () => void
@@ -465,6 +498,15 @@ export const useGameStore = create<GameState>((set, get) => ({
   sessionPlayerOneStreak: 0,
   sessionMaxRoundDamage: 0,
   sessionPoisonStacksGained: 0,
+  milestoneD4Message: null,
+  authUser: null,
+  setAuthUser: (user) => {
+    set({ authUser: user })
+    if (user) {
+      savePlayerName(user.displayName)
+      set({ playerName: user.displayName })
+    }
+  },
   playerName: loadPlayerName(),
   setPlayerName: (name) => {
     savePlayerName(name)
@@ -480,6 +522,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       runStats: emptyRunStats(),
       campaignPhase: 0,
       collection: startingCollectionForPhase(0),
+      milestoneD4Message: null,
     })
   },
 
@@ -571,6 +614,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       sessionPlayerOneStreak: 0,
       sessionMaxRoundDamage: 0,
       sessionPoisonStacksGained: 0,
+      milestoneD4Message: null,
     })
 
     void get().runBattleAsync(signal)
@@ -874,8 +918,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     const isLast = s.battleIndex === TOTAL_BATTLES - 1
     if (isLast && won) {
       const col = JSON.parse(JSON.stringify(s.collection)) as DieInstance[]
-      maybeGrantMilestoneD4(col, true, s.campaignPhase, s.battleIndex)
-      set({ collection: col })
+      const granted = maybeGrantMilestoneD4(col, true, s.campaignPhase, s.battleIndex)
+      set({
+        collection: col,
+        milestoneD4Message: granted
+          ? milestoneD4FeedbackText(s.campaignPhase, s.battleIndex)
+          : null,
+      })
       if (s.campaignPhase < CAMPAIGN_PHASE_COUNT - 1) {
         get().showPhaseBridge()
       } else {
@@ -889,7 +938,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   showUpgradeAfterBattle: (won) => {
     const state = get()
     const collection = JSON.parse(JSON.stringify(state.collection)) as DieInstance[]
-    maybeGrantMilestoneD4(collection, won, state.campaignPhase, state.battleIndex)
+    const granted = maybeGrantMilestoneD4(
+      collection,
+      won,
+      state.campaignPhase,
+      state.battleIndex,
+    )
     const upgrades = generateUpgrades(collection)
     const nextIdx = state.battleIndex + 1
     const enemies = JSON.parse(JSON.stringify(state.enemies)) as EnemyTemplate[]
@@ -915,6 +969,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       pendingUpgrades: upgrades,
       enemyUpgradePreview,
       enemies,
+      milestoneD4Message: granted
+        ? milestoneD4FeedbackText(state.campaignPhase, state.battleIndex)
+        : null,
     })
   },
 
@@ -938,7 +995,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     } else if (u.type === 'add_die') {
       col.push({ sides: 4, count: 1, special: [] })
     } else if (u.type === 'add_count') {
-      for (const d of col) d.count++
+      col[pickIndexOfOneHighestTierDie(col)].count++
     } else if (u.type === 'add_special' && u.special) {
       for (const d of col) {
         d.special = [...d.special, u.special]
