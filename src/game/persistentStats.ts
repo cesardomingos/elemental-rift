@@ -18,6 +18,14 @@ export type PersistentSnapshot = {
   clutchWins: number
   bestSingleRoundDamage: number
   bestPoisonStacksGainedBattle: number
+  /** Vitórias em batalhas PvP (Arena), entre runs. */
+  lifetimeArenaBattlesWon: number
+  /** Batalhas PvP disputadas (vitória ou derrota). */
+  lifetimeArenaBattlesPlayed: number
+  /** Temporadas completas da Arena vencidas (30 câmaras). */
+  arenaCampaignsWon: number
+  /** Maior pontuação de arena (AP) já atingida. */
+  peakArenaPoints: number
 }
 
 function defaultSnapshot(): PersistentSnapshot {
@@ -37,6 +45,10 @@ function defaultSnapshot(): PersistentSnapshot {
     clutchWins: 0,
     bestSingleRoundDamage: 0,
     bestPoisonStacksGainedBattle: 0,
+    lifetimeArenaBattlesWon: 0,
+    lifetimeArenaBattlesPlayed: 0,
+    arenaCampaignsWon: 0,
+    peakArenaPoints: 0,
   }
 }
 
@@ -93,6 +105,10 @@ function mergeSnapshots(a: PersistentSnapshot, b: PersistentSnapshot): Persisten
     clutchWins: Math.max(a.clutchWins, b.clutchWins),
     bestSingleRoundDamage: Math.max(a.bestSingleRoundDamage, b.bestSingleRoundDamage),
     bestPoisonStacksGainedBattle: Math.max(a.bestPoisonStacksGainedBattle, b.bestPoisonStacksGainedBattle),
+    lifetimeArenaBattlesWon: Math.max(a.lifetimeArenaBattlesWon, b.lifetimeArenaBattlesWon),
+    lifetimeArenaBattlesPlayed: Math.max(a.lifetimeArenaBattlesPlayed, b.lifetimeArenaBattlesPlayed),
+    arenaCampaignsWon: Math.max(a.arenaCampaignsWon, b.arenaCampaignsWon),
+    peakArenaPoints: Math.max(a.peakArenaPoints, b.peakArenaPoints),
   }
 }
 
@@ -225,8 +241,15 @@ export function recordAfterBattle(input: {
   chamberNumber: number
   sessionMaxRoundDamage: number
   sessionPoisonStacksGained: number
+  /** Batalha na Arena PvP (conta estatísticas de arena). */
+  isPvp?: boolean
 }): string[] {
   return patchPersistentStats((s) => {
+    if (input.isPvp) {
+      s.lifetimeArenaBattlesPlayed++
+      if (input.won) s.lifetimeArenaBattlesWon++
+    }
+
     s.lifetimeDamageDealt += input.sessionDamageToEnemy
     if (input.sessionDamageToEnemy > s.bestSingleBattleDamage) {
       s.bestSingleBattleDamage = input.sessionDamageToEnemy
@@ -251,12 +274,49 @@ export function recordAfterBattle(input: {
     if (s.bestSingleBattleDamage > 2000) candidates.push('damage_2k_battle')
     if (s.lifetimeDamageDealt >= 100_000) candidates.push('damage_100k_life')
     if (s.lifetimeBattlesWon >= 1) candidates.push('first_win')
-    if (s.lifetimeBattlesWon >= 25) candidates.push('wins_25')
+    for (const t of [25, 50, 100, 500, 1000] as const) {
+      if (s.lifetimeBattlesWon >= t) candidates.push(`wins_${t}`)
+    }
     if (s.flawlessBattleWins >= 1) candidates.push('flawless_one')
     if (s.bestChamberCleared >= 10) candidates.push('chamber_10')
     if (s.clutchWins >= 1) candidates.push('clutch_1hp')
     if (s.bestSingleRoundDamage > 150) candidates.push('round_damage_150')
     if (s.bestPoisonStacksGainedBattle >= 10) candidates.push('poison_10_battle')
+
+    if (s.lifetimeArenaBattlesWon >= 1) candidates.push('arena_first_win')
+    for (const t of [10, 50, 100] as const) {
+      if (s.lifetimeArenaBattlesWon >= t) candidates.push(`arena_wins_${t}`)
+    }
+    for (const t of [25, 100] as const) {
+      if (s.lifetimeArenaBattlesPlayed >= t) candidates.push(`arena_bouts_${t}`)
+    }
+
+    return unlockInPlace(s, candidates)
+  })
+}
+
+/** Ao vencer uma temporada completa da Arena (todas as câmaras). */
+export function recordArenaCampaignWon(): string[] {
+  return patchPersistentStats((s) => {
+    s.arenaCampaignsWon++
+    const candidates: string[] = []
+    if (s.arenaCampaignsWon >= 1) candidates.push('arena_season_1')
+    if (s.arenaCampaignsWon >= 5) candidates.push('arena_season_5')
+    if (s.arenaCampaignsWon >= 15) candidates.push('arena_season_15')
+    return unlockInPlace(s, candidates)
+  })
+}
+
+/** Atualiza pico de AP e desbloqueia conquistas de patamar. */
+export function recordArenaPointsPeak(ap: number): string[] {
+  if (!Number.isFinite(ap) || ap < 0) return []
+  return patchPersistentStats((s) => {
+    if (ap <= s.peakArenaPoints) return []
+    s.peakArenaPoints = ap
+    const candidates: string[] = []
+    if (ap >= 1500) candidates.push('arena_ap_1500')
+    if (ap >= 2000) candidates.push('arena_ap_2000')
+    if (ap >= 2500) candidates.push('arena_ap_2500')
     return unlockInPlace(s, candidates)
   })
 }

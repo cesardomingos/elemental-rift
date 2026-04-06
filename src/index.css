@@ -12,6 +12,9 @@
   --color-text-tertiary: #8a8780;
   --border-radius-md: 8px;
   --border-radius-lg: 12px;
+  /* Scrollbar (Firefox usa só cor sólida no thumb) */
+  --scrollbar-track: #e6e2d8;
+  --scrollbar-thumb: #b8942c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,6 +29,8 @@
     --color-text-primary: #f2f2f7;
     --color-text-secondary: #aeaeb2;
     --color-text-tertiary: #8e8e93;
+    --scrollbar-track: #2c2c2e;
+    --scrollbar-thumb: #9a7b1a;
   }
 }
 
@@ -33,6 +38,64 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Scrollbar personalizada (WebKit / Blink) — aplica-se a qualquer área com scroll */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    #e8c56a 0%,
+    #c9a227 48%,
+    #8f7318 100%
+  );
+  border-radius: 8px;
+  border: 2px solid var(--scrollbar-track);
+  min-height: 36px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    #f0d078 0%,
+    #d4af37 50%,
+    #a67c00 100%
+  );
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+@media (prefers-color-scheme: dark) {
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(
+      180deg,
+      #d4af37 0%,
+      #a67c00 45%,
+      #5c4508 100%
+    );
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(
+      180deg,
+      #e4c04a 0%,
+      #c9a227 50%,
+      #8a6a12 100%
+    );
+  }
 }
 
 body {
@@ -1510,8 +1573,11 @@ button.upgrade-card {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
 }
 
-.modal-panel--wide {
+/* Conquistas, grimório de evoluções e ranking: mesma largura e altura mínima */
+.modal-panel--uniform {
   max-width: 640px;
+  min-height: min(380px, 52vh);
+  max-height: min(88vh, 720px);
 }
 
 .achievements-list {
@@ -1530,12 +1596,27 @@ button.upgrade-card {
   border-radius: var(--border-radius-md);
   background: var(--color-background-secondary);
   border: 0.5px solid var(--color-border-tertiary);
-  opacity: 0.92;
 }
 
 .achievements-list__item--unlocked {
-  opacity: 1;
   border-color: var(--color-border-secondary);
+}
+
+.achievements-list__item--locked {
+  opacity: 0.52;
+  filter: grayscale(0.5);
+  background: var(--color-background-tertiary);
+  border-color: var(--color-border-tertiary);
+  cursor: default;
+}
+
+.achievements-list__item--locked .achievements-list__title {
+  color: var(--color-text-tertiary);
+}
+
+.achievements-list__item--locked .achievements-list__desc,
+.achievements-list__item--locked .achievements-list__progress {
+  color: var(--color-text-tertiary);
 }
 
 .achievements-list__icon {
@@ -1736,6 +1817,215 @@ button.upgrade-card {
 }
 
 /* Tela inicial — logo do jogo */
+.start-screen-hero-card {
+  position: relative;
+}
+
+.start-screen-hero-card--auth {
+  padding-top: 3.35rem;
+}
+
+.start-screen-hero-top {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  max-width: calc(100% - 1.7rem);
+}
+
+.start-screen-hero-card button.btn-start-signout {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text-secondary);
+  background: var(--color-background-primary);
+  border: 1.5px solid var(--start-gold, #c9a227);
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(201, 162, 39, 0.25);
+  max-width: min(220px, 46vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.start-screen-hero-card button.btn-start-signout:hover {
+  color: var(--color-text-primary);
+  background: var(--color-background-secondary);
+  border-color: var(--start-gold-bright, #e8c547);
+}
+
+.start-screen-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 1rem;
+  margin-top: 0.25rem;
+}
+
+.start-screen-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  width: 100%;
+}
+
+.start-screen-actions-row--primary {
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.start-screen-arena-col {
+  flex: 1 1 220px;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.start-screen-hero-card .start-screen-actions-row--primary button.btn-start-pve,
+.start-screen-hero-card .start-screen-arena-col button.btn-start-arena {
+  width: 100%;
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 2px solid var(--start-gold, #c9a227) !important;
+  box-shadow:
+    0 0 0 1px rgba(90, 70, 20, 0.2),
+    0 2px 10px rgba(0, 0, 0, 0.06);
+  transition:
+    background 0.15s,
+    filter 0.15s,
+    transform 0.12s,
+    box-shadow 0.15s;
+}
+
+.start-screen-hero-card .start-screen-actions-row--primary button.btn-start-pve {
+  flex: 1 1 220px;
+  max-width: 300px;
+}
+
+.start-screen-hero-card .start-screen-actions-row--primary button.btn-start-pve:disabled,
+.start-screen-hero-card .start-screen-arena-col button.btn-start-arena:disabled {
+  opacity: 0.55 !important;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.start-screen-hero-card .start-screen-actions-row--primary button.btn-start-pve {
+  background: linear-gradient(180deg, #c8e8dc, #aed9c8) !important;
+  color: #153d30 !important;
+}
+
+.start-screen-hero-card .start-screen-actions-row--primary button.btn-start-pve:hover:not(:disabled) {
+  background: linear-gradient(180deg, #b8dfd0, #9dceb8) !important;
+  box-shadow:
+    0 0 0 1px rgba(201, 162, 39, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.start-screen-hero-card .start-screen-arena-col button.btn-start-arena {
+  background: linear-gradient(145deg, #efd8cc, #e2c4b2) !important;
+  color: #4a2812 !important;
+  border-color: var(--start-gold, #c9a227) !important;
+}
+
+.start-screen-hero-card .start-screen-arena-col button.btn-start-arena:hover:not(:disabled) {
+  background: linear-gradient(145deg, #e5cbbd, #d6b8a2) !important;
+  box-shadow:
+    0 0 0 1px rgba(201, 162, 39, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  .start-screen-hero-card .start-screen-actions-row--primary button.btn-start-pve {
+    background: linear-gradient(180deg, #2a4540, #1f3530) !important;
+    color: #d8ebe6 !important;
+  }
+
+  .start-screen-hero-card .start-screen-actions-row--primary button.btn-start-pve:hover:not(:disabled) {
+    background: linear-gradient(180deg, #32544e, #243e38) !important;
+  }
+
+  .start-screen-hero-card .start-screen-arena-col button.btn-start-arena {
+    background: linear-gradient(145deg, #3f3028, #332820) !important;
+    color: #f0ddd2 !important;
+  }
+
+  .start-screen-hero-card .start-screen-arena-col button.btn-start-arena:hover:not(:disabled) {
+    background: linear-gradient(145deg, #4a3a30, #3a2d26) !important;
+  }
+}
+
+.start-screen-actions-row--secondary {
+  gap: 10px;
+  max-width: 520px;
+}
+
+.start-screen-hero-card button.btn-start-secondary {
+  flex: 1 1 140px;
+  min-height: 42px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary) !important;
+  background: var(--color-background-secondary) !important;
+  border: 1px solid rgba(201, 162, 39, 0.55) !important;
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.start-screen-hero-card button.btn-start-secondary:hover {
+  background: var(--color-background-tertiary) !important;
+  border-color: rgba(201, 162, 39, 0.85) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.start-screen-arena-col .start-screen-arena-rank {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.start-screen-arena-col .start-screen-arena-rank .arena-rank-badge {
+  margin: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .start-screen-hero-card button.btn-start-secondary {
+    background: var(--color-background-tertiary) !important;
+    border-color: rgba(212, 175, 55, 0.45) !important;
+  }
+
+  .start-screen-hero-card button.btn-start-secondary:hover {
+    background: #3d3d40 !important;
+    border-color: rgba(232, 197, 71, 0.6) !important;
+  }
+
+  .start-screen-hero-card button.btn-start-signout {
+    background: var(--color-background-secondary);
+  }
+}
+
 .start-screen-logo-heading {
   margin: 0 0 0.75rem;
   line-height: 0;
@@ -2229,6 +2519,35 @@ button.phase-bridge-carry-card {
 
 /* ── Leaderboard table ── */
 
+.leaderboard-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border-secondary);
+  padding: 0 1rem;
+  gap: 0;
+}
+
+.leaderboard-tab {
+  flex: 1;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.leaderboard-tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.leaderboard-tab--active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent, #7c6fe0);
+}
+
 .leaderboard-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -2421,4 +2740,187 @@ button.phase-bridge-carry-card {
   margin: 0;
   font-size: 12px;
   color: #e57373;
+}
+
+/* ── Arena PvP ── */
+
+.btn-arena {
+  background: linear-gradient(135deg, #e65100, #bf360c);
+  color: #fff;
+  border: none;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-weight: 600;
+  transition: filter 0.15s;
+}
+
+.btn-arena:hover {
+  filter: brightness(1.15);
+}
+
+.arena-phase-picker {
+  width: 100%;
+  text-align: center;
+  animation: fadeIn 0.2s ease;
+}
+
+.arena-phase-picker__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.arena-phase-picker__grid {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.arena-phase-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 20px;
+  border-radius: var(--border-radius);
+  border: 2px solid var(--color-border-secondary);
+  background: var(--color-background-secondary, #1e1e2e);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.15s, transform 0.1s;
+}
+
+.arena-phase-btn:hover:not(:disabled) {
+  border-color: #e65100;
+  transform: scale(1.05);
+}
+
+.arena-phase-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.arena-phase-btn__icon {
+  font-size: 24px;
+}
+
+.arena-phase-btn__label {
+  font-weight: 600;
+}
+
+.arena-loading {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.fighter--pvp .fighter-identity--enemy {
+  border-color: #e65100;
+}
+
+.fighter--pvp .name {
+  color: #ff9800;
+  font-weight: 700;
+}
+
+.pvp-opponent-name {
+  color: #ff9800;
+  font-weight: 700;
+}
+
+.post-battle-pvp-opponent {
+  margin: -4px 0 8px;
+  font-size: 15px;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.post-battle-pvp-opponent .pvp-opponent-name {
+  font-size: 17px;
+}
+
+/* ── Arena rank badge ── */
+
+.arena-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1.5px solid;
+}
+
+.arena-rank-badge__pts {
+  opacity: 0.75;
+  font-weight: 400;
+  font-size: 11px;
+}
+
+.arena-rank-badge--bronze {
+  background: rgba(205, 127, 50, 0.15);
+  border-color: #cd7f32;
+  color: #cd7f32;
+}
+
+.arena-rank-badge--silver {
+  background: rgba(192, 192, 192, 0.15);
+  border-color: #aaa;
+  color: #c0c0c0;
+}
+
+.arena-rank-badge--gold {
+  background: rgba(255, 215, 0, 0.12);
+  border-color: #daa520;
+  color: #ffd700;
+}
+
+.arena-rank-badge--platinum {
+  background: rgba(100, 200, 255, 0.12);
+  border-color: #64b5f6;
+  color: #90caf9;
+}
+
+.arena-rank-badge--diamond {
+  background: rgba(185, 242, 255, 0.12);
+  border-color: #80deea;
+  color: #b9f2ff;
+}
+
+.battle-hud-rank {
+  font-size: 11px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
+.arena-points-result {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.arena-points-delta {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.arena-points-delta--up {
+  color: #66bb6a;
+}
+
+.arena-points-delta--down {
+  color: #ef5350;
 }

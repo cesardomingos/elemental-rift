@@ -40,7 +40,7 @@ export function AchievementsModal({ open, onClose }: Props) {
       }}
     >
       <div
-        className="modal-panel modal-panel--wide"
+        className="modal-panel modal-panel--uniform"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -76,10 +76,10 @@ export function AchievementsModal({ open, onClose }: Props) {
                   key={a.id}
                   className={[
                     'achievements-list__item',
-                    unlocked ? 'achievements-list__item--unlocked' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
+                    unlocked
+                      ? 'achievements-list__item--unlocked'
+                      : 'achievements-list__item--locked',
+                  ].join(' ')}
                 >
                   <span className="achievements-list__icon" aria-hidden>
                     {unlocked ? a.icon : '🔒'}

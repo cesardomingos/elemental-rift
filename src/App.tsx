@@ -35,7 +35,7 @@ import type {
   RoundHealPopup,
   RunStats,
 } from './game/types'
-import { computeScore, GAME_VERSION, type BuildSnapshot } from './game/runSubmission'
+import { computeScore, GAME_VERSION, getArenaRankInfo, type BuildSnapshot } from './game/runSubmission'
 import { submitRun, getAuthUser, onAuthChange, signOut, supabase } from './lib/supabase'
 import { syncFromCloud } from './game/persistentStats'
 
@@ -437,16 +437,28 @@ function DieFace({
   return <div className={cls}>{value}</div>
 }
 
+function ArenaRankBadge({ points, className = '' }: { points: number; className?: string }) {
+  const info = getArenaRankInfo(points)
+  return (
+    <span className={`arena-rank-badge arena-rank-badge--${info.rank} ${className}`}>
+      {info.icon} {info.label} <span className="arena-rank-badge__pts">{points} AP</span>
+    </span>
+  )
+}
+
 function StartScreen() {
   const collection = useGameStore((s) => s.collection)
   const startCampaign = useGameStore((s) => s.startCampaign)
   const startCampaignFromBuild = useGameStore((s) => s.startCampaignFromBuild)
+  const startPvpCampaign = useGameStore((s) => s.startPvpCampaign)
   const authUser = useGameStore((s) => s.authUser)
   const setAuthUser = useGameStore((s) => s.setAuthUser)
+  const arenaPoints = useGameStore((s) => s.arenaPoints)
   const [guideOpen, setGuideOpen] = useState(false)
   const [achievementsOpen, setAchievementsOpen] = useState(false)
   const [leaderboardOpen, setLeaderboardOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
+  const [arenaLoading, setArenaLoading] = useState(false)
 
   const handleLoadBuild = useCallback(
     (snapshot: BuildSnapshot) => startCampaignFromBuild(snapshot),
@@ -457,6 +469,17 @@ function StartScreen() {
     await signOut()
     setAuthUser(null)
   }
+
+  const handleStartArena = async () => {
+    setArenaLoading(true)
+    try {
+      await startPvpCampaign()
+    } finally {
+      setArenaLoading(false)
+    }
+  }
+
+  const showAuthCorner = Boolean(authUser || supabase)
 
   return (
     <div className="app-screen active">
@@ -472,7 +495,27 @@ function StartScreen() {
         onClose={() => setAuthOpen(false)}
         onAuth={(user) => setAuthUser(user)}
       />
-      <div className="card" style={{ textAlign: 'center', padding: '2rem 1.5rem' }}>
+      <div
+        className={[
+          'card',
+          'start-screen-hero-card',
+          showAuthCorner ? 'start-screen-hero-card--auth' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        style={{ textAlign: 'center', padding: '2rem 1.5rem' }}
+      >
+        <div className="start-screen-hero-top">
+          {authUser ? (
+            <button type="button" className="btn-start-signout" onClick={handleSignOut}>
+              Sair ({authUser.displayName})
+            </button>
+          ) : supabase ? (
+            <button type="button" className="btn-start-signout" onClick={() => setAuthOpen(true)}>
+              Entrar / Criar conta
+            </button>
+          ) : null}
+        </div>
         <h1 className="start-screen-logo-heading">
           <img
             src="/elemental-rift-logo.png"
@@ -513,61 +556,42 @@ function StartScreen() {
           </ul>
         </div>
         <CampaignTrailMap doneThrough={-1} pulsePhase={0} />
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 10,
-            justifyContent: 'center',
-            marginBottom: '1rem',
-          }}
-        >
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={startCampaign}
-            style={{ padding: '10px 32px', fontSize: 15 }}
-          >
-            Iniciar trilha
-          </button>
-          <button
-            type="button"
-            onClick={() => setGuideOpen(true)}
-            style={{ padding: '10px 20px', fontSize: 14 }}
-          >
-            📖 Ver evoluções possíveis
-          </button>
-          <button
-            type="button"
-            onClick={() => setAchievementsOpen(true)}
-            style={{ padding: '10px 20px', fontSize: 14 }}
-          >
-            🏆 Conquistas
-          </button>
-          <button
-            type="button"
-            onClick={() => setLeaderboardOpen(true)}
-            style={{ padding: '10px 20px', fontSize: 14 }}
-          >
-            📊 Ranking
-          </button>
-          {authUser ? (
+        <div className="start-screen-actions">
+          <div className="start-screen-actions-row start-screen-actions-row--primary">
+            <button type="button" className="btn-start-pve" onClick={startCampaign}>
+              🧟 Iniciar trilha PVE
+            </button>
+            <div className="start-screen-arena-col">
+              <button
+                type="button"
+                className="btn-start-arena"
+                disabled={arenaLoading}
+                onClick={handleStartArena}
+              >
+                {arenaLoading ? 'Buscando oponentes…' : '⚔️ Arena PvP'}
+              </button>
+              {authUser ? (
+                <div className="start-screen-arena-rank">
+                  <ArenaRankBadge points={arenaPoints} />
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div className="start-screen-actions-row start-screen-actions-row--secondary">
+            <button type="button" className="btn-start-secondary" onClick={() => setGuideOpen(true)}>
+              📖 Ver evoluções possíveis
+            </button>
             <button
               type="button"
-              onClick={handleSignOut}
-              style={{ padding: '10px 20px', fontSize: 14 }}
+              className="btn-start-secondary"
+              onClick={() => setAchievementsOpen(true)}
             >
-              Sair ({authUser.displayName})
+              🏆 Conquistas
             </button>
-          ) : supabase ? (
-            <button
-              type="button"
-              onClick={() => setAuthOpen(true)}
-              style={{ padding: '10px 20px', fontSize: 14 }}
-            >
-              Entrar / Criar conta
+            <button type="button" className="btn-start-secondary" onClick={() => setLeaderboardOpen(true)}>
+              📊 Ranking
             </button>
-          ) : null}
+          </div>
         </div>
       </div>
       <div className="card">
@@ -587,7 +611,7 @@ function StartScreen() {
           <strong>+{PLAYER_HP_GROWTH_PER_BATTLE} PV máximos</strong> (início: {PLAYER_BASE_HP}). A cada{' '}
           <strong>5 câmaras vencidas</strong> na campanha (5.ª, 10.ª, 15.ª…) você ganha automaticamente um{' '}
           <strong>1d4</strong> extra na mesa. As cartas do grimório aplicam o efeito a{' '}
-          <strong>todos os seus dados</strong> nas cartas de evoluir faces e de especial; a carta de mais
+          <strong>todos os seus dados</strong> nas cartas de evoluir dados e de especial; a carta de mais
           rolagens adiciona <strong>+1 cópia só em um dos dados mais altos</strong> (mais faces).
           Você tem 3 vidas para toda a campanha.
         </p>
@@ -620,6 +644,8 @@ function BattleScreen() {
   const playerDamagePopup = useGameStore((s) => s.playerDamagePopup)
   const playerHealPopup = useGameStore((s) => s.playerHealPopup)
   const enemyHealPopup = useGameStore((s) => s.enemyHealPopup)
+  const isPvpMode = useGameStore((s) => s.isPvpMode)
+  const arenaPoints = useGameStore((s) => s.arenaPoints)
 
   const enemy = enemies[battleIndex]
   const pPct = Math.max(0, (playerHp / playerHpMax) * 100)
@@ -635,13 +661,19 @@ function BattleScreen() {
             <div className="battle-hud-text">
               <span className="battle-hud-title">
                 <span className="battle-hud-phase-icon" aria-hidden>
-                  {phaseTheme.icon}
+                  {isPvpMode ? '⚔️' : phaseTheme.icon}
                 </span>
                 <span>
-                  Fase {campaignPhase + 1}/{CAMPAIGN_PHASE_COUNT} · Câmara {battleIndex + 1}/{TOTAL_BATTLES}
+                  {isPvpMode
+                    ? `Arena ${phaseTheme.label} · Duelo ${battleIndex + 1}/${TOTAL_BATTLES}`
+                    : `Fase ${campaignPhase + 1}/${CAMPAIGN_PHASE_COUNT} · Câmara ${battleIndex + 1}/${TOTAL_BATTLES}`}
                 </span>
               </span>
-              <span className="battle-hud-sub">{phaseTheme.label}</span>
+              <span className="battle-hud-sub">
+                {isPvpMode ? (
+                  <>⚔️ PvP — {phaseTheme.label} · <ArenaRankBadge points={arenaPoints} className="battle-hud-rank" /></>
+                ) : phaseTheme.label}
+              </span>
               {battlePaused && battleRunning ? (
                 <span className="pause-badge battle-hud-pause">PAUSADO</span>
               ) : null}
@@ -698,15 +730,19 @@ function BattleScreen() {
         <div className="vs-label" aria-hidden>
           VS
         </div>
-        <div className="fighter fighter--enemy">
+        <div className={`fighter fighter--enemy${isPvpMode ? ' fighter--pvp' : ''}`}>
           <div className="fighter-identity fighter-identity--enemy">
-            <EnemyAvatar
-              battleIndex={battleIndex}
-              enemyName={enemy?.name ?? 'Guardião da Fenda'}
-            />
+            {isPvpMode ? (
+              <PlayerAvatar battlesWon={battleIndex} className="fighter-panel-avatar" />
+            ) : (
+              <EnemyAvatar
+                battleIndex={battleIndex}
+                enemyName={enemy?.name ?? 'Guardião da Fenda'}
+              />
+            )}
             <div className="fighter-identity-text">
               <div className="name">{enemy?.name ?? '…'}</div>
-              <span className="fighter-role">Inimigo</span>
+              <span className="fighter-role">{isPvpMode ? 'Oponente' : 'Inimigo'}</span>
             </div>
           </div>
           <div className="enemy-hp-block">
@@ -775,6 +811,7 @@ function PostBattleScreen() {
   const lives = useGameStore((s) => s.lives)
   const runStats = useGameStore((s) => s.runStats)
   const continueFromPostBattle = useGameStore((s) => s.continueFromPostBattle)
+  const isPvpMode = useGameStore((s) => s.isPvpMode)
 
   const enemy = enemies[battleIndex]
   const phaseTheme = getCampaignPhaseTheme(campaignPhase)
@@ -785,7 +822,15 @@ function PostBattleScreen() {
     lastBattleWon && globalChamberWon % 5 === 0
 
   let nextHint: string
-  if (!lastBattleWon) {
+  if (isPvpMode) {
+    if (!lastBattleWon) {
+      nextHint = 'Em seguida: o grimório oferece um aprimoramento antes de enfrentar o mesmo oponente.'
+    } else if (phaseComplete) {
+      nextHint = 'Em seguida: o desfecho da Arena!'
+    } else {
+      nextHint = 'Em seguida: escolha um aprimoramento no grimório antes do próximo duelo.'
+    }
+  } else if (!lastBattleWon) {
     nextHint = 'Em seguida: o grimório oferece um aprimoramento antes de repetir esta câmara.'
   } else if (campaignComplete) {
     nextHint = 'Em seguida: o desfecho da sua trilha na Fenda.'
@@ -810,10 +855,35 @@ function PostBattleScreen() {
         <div className="post-battle-avatar-row">
           <PlayerAvatar battlesWon={runStats.battlesWon} emphasize={lastBattleWon} />
         </div>
-        <h2 className="post-battle-title">{lastBattleWon ? 'Parabéns!' : 'Confronto encerrado'}</h2>
+        <h2 className="post-battle-title">
+          {isPvpMode
+            ? lastBattleWon ? 'Duelo vencido!' : 'Duelo perdido'
+            : lastBattleWon ? 'Parabéns!' : 'Confronto encerrado'}
+        </h2>
+        {isPvpMode && enemy ? (
+          <p className="post-battle-pvp-opponent">
+            vs <span className="pvp-opponent-name">{enemy.name}</span>
+          </p>
+        ) : null}
         {lastBattleWon ? (
           <p className="post-battle-lead">
-            {phaseComplete ? (
+            {isPvpMode ? (
+              phaseComplete ? (
+                <>
+                  Você <strong>dominou a Arena</strong>! Todos os{' '}
+                  <strong>{TOTAL_BATTLES} oponentes</strong> foram derrotados.
+                </>
+              ) : (
+                <>
+                  A build de <strong className="pvp-opponent-name">{enemy?.name ?? 'o oponente'}</strong>{' '}
+                  não resistiu. Duelo{' '}
+                  <strong>
+                    {battleIndex + 1}/{TOTAL_BATTLES}
+                  </strong>{' '}
+                  vencido.
+                </>
+              )
+            ) : phaseComplete ? (
               <>
                 Você <strong>encerrou esta fase</strong> da Fenda
                 {campaignComplete ? ' e toda a campanha' : ''}. Vitória sobre{' '}
@@ -831,8 +901,17 @@ function PostBattleScreen() {
           </p>
         ) : (
           <p className="post-battle-lead">
-            <strong>{enemy?.name ?? 'O guardião'}</strong> prevaleceu desta vez. Restam{' '}
-            <strong>{lives}</strong> {lives === 1 ? 'vida' : 'vidas'}.
+            {isPvpMode ? (
+              <>
+                A build de <strong className="pvp-opponent-name">{enemy?.name ?? 'o oponente'}</strong>{' '}
+                prevaleceu. Restam <strong>{lives}</strong> {lives === 1 ? 'vida' : 'vidas'}.
+              </>
+            ) : (
+              <>
+                <strong>{enemy?.name ?? 'O guardião'}</strong> prevaleceu desta vez. Restam{' '}
+                <strong>{lives}</strong> {lives === 1 ? 'vida' : 'vidas'}.
+              </>
+            )}
           </p>
         )}
         {milestoneD4Pending ? (
@@ -972,6 +1051,7 @@ function PhaseBridgeScreen() {
   const playerHpMax = useGameStore((s) => s.playerHpMax)
   const lives = useGameStore((s) => s.lives)
   const runStats = useGameStore((s) => s.runStats)
+  const isPvpMode = useGameStore((s) => s.isPvpMode)
 
   const [carryDiceIdx, setCarryDiceIdx] = useState(0)
   useEffect(() => {
@@ -989,20 +1069,43 @@ function PhaseBridgeScreen() {
         <div style={{ fontSize: 40, marginBottom: 8 }} aria-hidden>
           🗺️
         </div>
-        <h2 style={{ marginBottom: 8 }}>Fronteira da Fenda</h2>
+        <h2 style={{ marginBottom: 8 }}>
+          {isPvpMode ? 'Fronteira da Arena' : 'Fronteira da Fenda'}
+        </h2>
         <p style={{ marginBottom: 12, color: 'var(--color-text-secondary)' }}>
-          A fase{' '}
-          <strong>
-            <span aria-hidden>{doneTheme.icon}</span> {doneTheme.label}
-          </strong>{' '}
-          foi selada ({TOTAL_BATTLES} câmaras). Na próxima etapa você recebe{' '}
-          <strong>{diceFriendlyOneDieOf(nextDie)}</strong>{' '}
-          <span style={{ fontSize: 12, opacity: 0.9 }}>(notação {diceNotationOne(nextDie)})</span> e leva{' '}
-          <strong>mais um dado</strong> à sua escolha da mesa abaixo. O que permanece do corpo:{' '}
-          <strong>
-            {playerHp} / {playerHpMax} PV
-          </strong>{' '}
-          e <strong>{lives}</strong> vida(s).
+          {isPvpMode ? (
+            <>
+              A arena{' '}
+              <strong>
+                <span aria-hidden>{doneTheme.icon}</span> {doneTheme.label}
+              </strong>{' '}
+              foi dominada ({TOTAL_BATTLES} duelos). Na próxima fase os oponentes serão mais fortes.
+              Você recebe{' '}
+              <strong>{diceFriendlyOneDieOf(nextDie)}</strong>{' '}
+              <span style={{ fontSize: 12, opacity: 0.9 }}>(notação {diceNotationOne(nextDie)})</span>{' '}
+              e leva <strong>mais um dado</strong> à sua escolha. Seu estado:{' '}
+              <strong>
+                {playerHp} / {playerHpMax} PV
+              </strong>{' '}
+              e <strong>{lives}</strong> vida(s).
+            </>
+          ) : (
+            <>
+              A fase{' '}
+              <strong>
+                <span aria-hidden>{doneTheme.icon}</span> {doneTheme.label}
+              </strong>{' '}
+              foi selada ({TOTAL_BATTLES} câmaras). Na próxima etapa você recebe{' '}
+              <strong>{diceFriendlyOneDieOf(nextDie)}</strong>{' '}
+              <span style={{ fontSize: 12, opacity: 0.9 }}>(notação {diceNotationOne(nextDie)})</span>{' '}
+              e leva <strong>mais um dado</strong> à sua escolha da mesa abaixo. O que permanece do
+              corpo:{' '}
+              <strong>
+                {playerHp} / {playerHpMax} PV
+              </strong>{' '}
+              e <strong>{lives}</strong> vida(s).
+            </>
+          )}
         </p>
         {milestoneD4Message ? (
           <p className="milestone-d4-banner" role="status">
@@ -1185,6 +1288,10 @@ function EndScreen() {
   const startCampaignFromBuild = useGameStore((s) => s.startCampaignFromBuild)
   const lastBattleLog = useGameStore((s) => s.lastBattleLog)
   const runStats = useGameStore((s) => s.runStats)
+  const isPvpMode = useGameStore((s) => s.isPvpMode)
+  const campaignPhase = useGameStore((s) => s.campaignPhase)
+  const arenaPoints = useGameStore((s) => s.arenaPoints)
+  const lastArenaPointsDelta = useGameStore((s) => s.lastArenaPointsDelta)
   const [leaderboardOpen, setLeaderboardOpen] = useState(false)
 
   const handleLoadBuild = useCallback(
@@ -1201,7 +1308,57 @@ function EndScreen() {
       />
 
       <div className="card end-screen-hero">
-        {endVictory ? (
+        {isPvpMode && endVictory ? (
+          <>
+            <div className="end-screen-badge" aria-hidden>
+              ⚔️
+            </div>
+            <p className="end-screen-ribbon">Arena dominada</p>
+            <div className="end-screen-emoji-row" aria-hidden>
+              🏆 ⚔️ 🎲
+            </div>
+            <h2 className="end-screen-title">Campeão da Arena</h2>
+            <p className="end-screen-lead">
+              Você atravessou as <strong>{CAMPAIGN_PHASE_COUNT} fases</strong> da Arena (
+              <strong>{TOTAL_CAMPAIGN_CHAMBERS} duelos</strong>) enfrentando builds reais de outros
+              jogadores. Nenhuma build resistiu à sua estratégia.
+            </p>
+            <p className="end-screen-sub">Volte à campanha ou tente novamente!</p>
+            {lastArenaPointsDelta !== null && (
+              <div className="arena-points-result">
+                <ArenaRankBadge points={arenaPoints} />
+                <span className={`arena-points-delta arena-points-delta--${lastArenaPointsDelta >= 0 ? 'up' : 'down'}`}>
+                  {lastArenaPointsDelta >= 0 ? '+' : ''}{lastArenaPointsDelta} AP
+                </span>
+              </div>
+            )}
+          </>
+        ) : isPvpMode && !endVictory ? (
+          <>
+            <div className="end-screen-grave" aria-hidden>
+              <span className="end-screen-grave__mound" />
+              <span className="end-screen-grave__coffin">⚰️</span>
+              <span className="end-screen-grave__stone">🪦</span>
+              <span className="end-screen-grave__skull">💀</span>
+            </div>
+            <p className="end-screen-epitaph">Derrotado na Arena</p>
+            <h2 className="end-screen-title end-screen-title--defeat">Arena encerrada</h2>
+            <p className="end-screen-lead">
+              Suas três vidas se esgotaram na fase{' '}
+              <strong>{CAMPAIGN_PHASES[campaignPhase]?.label ?? ''}</strong> da Arena. As builds alheias
+              foram duras demais — por enquanto.
+            </p>
+            <p className="end-screen-sub">Tente novamente ou volte à campanha.</p>
+            {lastArenaPointsDelta !== null && (
+              <div className="arena-points-result">
+                <ArenaRankBadge points={arenaPoints} />
+                <span className={`arena-points-delta arena-points-delta--${lastArenaPointsDelta >= 0 ? 'up' : 'down'}`}>
+                  {lastArenaPointsDelta >= 0 ? '+' : ''}{lastArenaPointsDelta} AP
+                </span>
+              </div>
+            )}
+          </>
+        ) : endVictory ? (
           <>
             <div className="end-screen-badge" aria-hidden>
               🏆

@@ -40,7 +40,7 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
       }}
     >
       <div
-        className="modal-panel"
+        className="modal-panel modal-panel--uniform"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -76,7 +76,7 @@ export function EvolutionsGuideModal({ open, onClose }: Props) {
             <ul className="modal-list">
               <li>
                 <strong>1ª opção (fixa)</strong>: enquanto <strong>algum</strong> dado ainda não for o de{' '}
-                {DICE_TYPES[DICE_TYPES.length - 1]} faces, <strong>evoluir faces</strong> sobe{' '}
+                {DICE_TYPES[DICE_TYPES.length - 1]} faces, <strong>evoluir dados</strong> sobe{' '}
                 <strong>um passo na cadeia</strong> em <strong>cada dado</strong> que ainda puder (
                 <code>{diceChain}</code>). Quando <strong>todos</strong> já estiverem no topo da cadeia:{' '}
                 <strong>+1 cópia</strong> em <strong>um dos dados com mais faces</strong> (em empate, vale o

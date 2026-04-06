@@ -39,12 +39,27 @@ import {
 } from '../audio/feedbackSfx'
 import {
   recordAfterBattle,
+  recordArenaCampaignWon,
+  recordArenaPointsPeak,
   recordCampaignComplete,
   recordPlayerRollSession,
   recordUpgradeChosen,
 } from '../game/persistentStats'
-import type { BuildSnapshot } from '../game/runSubmission'
-import type { AuthUser } from '../lib/supabase'
+import {
+  GAME_VERSION,
+  ARENA_START_POINTS,
+  computeArenaPointsDelta,
+  type BuildSnapshot,
+} from '../game/runSubmission'
+import {
+  recordBattle,
+  fetchPvpPool,
+  pickFromPool,
+  fetchArenaPoints,
+  updateArenaPoints,
+  type AuthUser,
+  type PvpPool,
+} from '../lib/supabase'
 
 const PLAYER_NAME_KEY = 'elemental-rift-player-name'
 
@@ -301,7 +316,7 @@ function generateUpgrades(collection: DieInstance[]): UpgradeOption[] {
     ? {
         type: 'upgrade_die',
         icon: '🎲',
-        label: 'Evoluir faces (todos os dados)',
+        label: 'Evoluir dados (todos)',
         desc: `🎲 Cada dado que ainda não for o de ${DICE_TYPES[DICE_TYPES.length - 1]} faces sobe um passo na cadeia (${DICE_TYPES.join(' → ')}).`,
       }
     : {
@@ -440,12 +455,17 @@ interface GameState {
   sessionPoisonStacksGained: number
   /** Aviso de +1d4 por marco (5.ª, 10.ª câmara…); limpo ao iniciar batalha. */
   milestoneD4Message: string | null
+  isPvpMode: boolean
+  pvpPool: PvpPool | null
+  arenaPoints: number
+  lastArenaPointsDelta: number | null
   authUser: AuthUser | null
   setAuthUser: (user: AuthUser | null) => void
   playerName: string
   setPlayerName: (name: string) => void
   startCampaign: () => void
   startCampaignFromBuild: (snapshot: BuildSnapshot) => void
+  startPvpCampaign: () => Promise<void>
   goToStart: () => void
   beginNextCampaignPhase: (carryDiceIndex: number) => void
   startBattle: () => void
@@ -499,12 +519,22 @@ export const useGameStore = create<GameState>((set, get) => ({
   sessionMaxRoundDamage: 0,
   sessionPoisonStacksGained: 0,
   milestoneD4Message: null,
+  isPvpMode: false,
+  pvpPool: null,
+  arenaPoints: ARENA_START_POINTS,
+  lastArenaPointsDelta: null,
   authUser: null,
   setAuthUser: (user) => {
     set({ authUser: user })
     if (user) {
       savePlayerName(user.displayName)
       set({ playerName: user.displayName })
+      fetchArenaPoints()
+        .then((pts) => {
+          recordArenaPointsPeak(pts)
+          set({ arenaPoints: pts })
+        })
+        .catch(() => {})
     }
   },
   playerName: loadPlayerName(),
@@ -523,6 +553,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       campaignPhase: 0,
       collection: startingCollectionForPhase(0),
       milestoneD4Message: null,
+      isPvpMode: false,
+      pvpPool: null,
+      lastArenaPointsDelta: null,
     })
   },
 
@@ -534,6 +567,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lives: 3,
       battleIndex: 0,
       campaignPhase: 0,
+      isPvpMode: false,
       enemies: createRunEnemies(0),
       playerHpMax: PLAYER_BASE_HP,
       playerHp: PLAYER_BASE_HP,
@@ -553,6 +587,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       lives: 3,
       battleIndex: 0,
       campaignPhase: 0,
+      isPvpMode: false,
       enemies: createRunEnemies(0),
       playerHpMax: snapshot.playerHpMax,
       playerHp: snapshot.playerHpMax,
@@ -560,6 +595,38 @@ export const useGameStore = create<GameState>((set, get) => ({
       runStats: emptyRunStats(),
       screen: 'battle',
     })
+    get().startBattle()
+  },
+
+  startPvpCampaign: async () => {
+    battleAbortController?.abort()
+    battleAbortController = null
+    const userId = get().authUser?.id
+
+    const pool = await fetchPvpPool(0, TOTAL_BATTLES, userId)
+    const fallback = createRunEnemies(0)
+
+    const startLives = 3
+    const ap = get().arenaPoints
+    const enemies: EnemyTemplate[] = fallback.map((mob, i) =>
+      pickFromPool(pool, i, startLives, ap) ?? mob,
+    )
+
+    set({
+      collection: startingCollectionForPhase(0),
+      lives: startLives,
+      battleIndex: 0,
+      campaignPhase: 0,
+      isPvpMode: true,
+      pvpPool: pool,
+      enemies,
+      playerHpMax: PLAYER_BASE_HP,
+      playerHp: PLAYER_BASE_HP,
+      lastBattleLog: [],
+      runStats: emptyRunStats(),
+      screen: 'battle',
+    })
+    recordArenaPointsPeak(get().arenaPoints)
     get().startBattle()
   },
 
@@ -571,6 +638,31 @@ export const useGameStore = create<GameState>((set, get) => ({
     const next = s.campaignPhase + 1
     const idx = Number.isFinite(carryDiceIndex) ? Math.floor(carryDiceIndex) : 0
     const collection = mergePhaseStarterWithCarriedDie(next, s.collection, idx)
+
+    if (s.isPvpMode) {
+      void (async () => {
+        const userId = s.authUser?.id
+        const pool = await fetchPvpPool(next, TOTAL_BATTLES, userId)
+        const fallback = createRunEnemies(next)
+        const enemies: EnemyTemplate[] = fallback.map((mob, i) =>
+          pickFromPool(pool, i, s.lives, s.arenaPoints) ?? mob,
+        )
+        set({
+          campaignPhase: next,
+          collection,
+          battleIndex: 0,
+          enemies,
+          pvpPool: pool,
+          screen: 'battle',
+          pendingUpgrades: [],
+          lastBattleWon: false,
+          enemyUpgradePreview: '',
+        })
+        get().startBattle()
+      })()
+      return
+    }
+
     set({
       campaignPhase: next,
       collection,
@@ -586,7 +678,16 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   startBattle: () => {
     const s = get()
-    const enemy = s.enemies[s.battleIndex]
+
+    if (s.isPvpMode && s.pvpPool) {
+      const fallback = s.enemies[s.battleIndex]!
+      const picked = pickFromPool(s.pvpPool, s.battleIndex, s.lives, s.arenaPoints) ?? fallback
+      const enemies = [...s.enemies]
+      enemies[s.battleIndex] = picked
+      set({ enemies })
+    }
+
+    const enemy = get().enemies[get().battleIndex]
     battleAbortController?.abort()
     battleAbortController = new AbortController()
     const signal = battleAbortController.signal
@@ -857,6 +958,33 @@ export const useGameStore = create<GameState>((set, get) => ({
     const state = get()
     const won = state.enemyHp <= 0
     const playerHpEnd = state.playerHp
+    const enemy = state.enemies[state.battleIndex]
+
+    recordBattle({
+      playerName: state.playerName,
+      gameVersion: GAME_VERSION,
+      mode: state.isPvpMode ? 'pvp' : 'pve',
+      arenaPoints: state.arenaPoints,
+      campaignPhase: state.campaignPhase,
+      chamberIndex: state.battleIndex,
+      won,
+      playerState: {
+        collection: JSON.parse(JSON.stringify(state.collection)),
+        playerHpMax: state.playerHpMax,
+        lives: state.lives,
+      },
+      enemyState: {
+        name: enemy?.name ?? 'Guardião',
+        hp: state.enemyHpMax,
+        dice: enemy ? JSON.parse(JSON.stringify(enemy.dice)) : [],
+      },
+      damageDealt: state.sessionDamageToEnemy,
+      damageTaken: state.sessionDamageToPlayer,
+      combatRounds: state.battleRound,
+      playerHpEnd: Math.max(0, playerHpEnd),
+      enemyHpEnd: Math.max(0, state.enemyHp),
+    }).catch(() => {})
+
     recordAfterBattle({
       won,
       sessionDamageToEnemy: state.sessionDamageToEnemy,
@@ -865,6 +993,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       chamberNumber: state.battleIndex + 1,
       sessionMaxRoundDamage: state.sessionMaxRoundDamage,
       sessionPoisonStacksGained: state.sessionPoisonStacksGained,
+      isPvp: state.isPvpMode,
     })
     let lives = state.lives
     let playerHp = state.playerHp
@@ -949,7 +1078,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     const enemies = JSON.parse(JSON.stringify(state.enemies)) as EnemyTemplate[]
 
     let enemyUpgradePreview: string
-    if (nextIdx < enemies.length) {
+    if (state.isPvpMode) {
+      const next = enemies[nextIdx]
+      enemyUpgradePreview = next
+        ? `⚔️ Próximo oponente: ${next.name}`
+        : 'Última câmara da Arena!'
+    } else if (nextIdx < enemies.length) {
       let u = generateEnemyUpgrade(enemies[nextIdx]!, nextIdx)
       applyEnemyUpgradeToNext(enemies, state.battleIndex, u)
       enemyUpgradePreview = `${u.icon} ${u.label}: ${u.desc}`
@@ -1024,7 +1158,25 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   showEndScreen: (victory) => {
-    if (victory) recordCampaignComplete()
+    const pvp = get().isPvpMode
+    if (victory && !pvp) recordCampaignComplete()
+    if (victory && pvp) recordArenaCampaignWon()
+
+    const state = get()
+    if (state.isPvpMode) {
+      const chambersWon = state.runStats.battlesWon
+      const delta = computeArenaPointsDelta(chambersWon)
+      set({ lastArenaPointsDelta: delta })
+      updateArenaPoints(delta)
+        .then((pts) => {
+          recordArenaPointsPeak(pts)
+          set({ arenaPoints: pts })
+        })
+        .catch(() => {})
+    } else {
+      set({ lastArenaPointsDelta: null })
+    }
+
     set({
       screen: 'end',
       endVictory: victory,
